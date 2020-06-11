@@ -30,7 +30,7 @@ All the evaluation codes are in SIG.ipynb
 
 ## Pre-trained Models
 
-You can download pretrained models [here](https://drive.google.com/mymodel.pth)
+You can download pretrained models [here](https://zenodo.org/record/3890090)
 
 
 ## Results
