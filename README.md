@@ -1,6 +1,6 @@
 # Sliced Iterative Generator
 
-This repository is the official implementation of Sliced Iterative Generator. 
+This repository is the official implementation of [Sliced Iterative Generator](https://arxiv.org/abs/2007.00674). 
 
 ## Requirements
 
