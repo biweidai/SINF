@@ -1,4 +1,4 @@
-# Sliced Iterative Generator
+# Sliced Iterative Generator (SIG) & Gaussianizing Iterative Slicing (GIS)
 
 This repository is the official implementation of [Sliced Iterative Generator](https://arxiv.org/abs/2007.00674). 
 
