@@ -166,14 +166,6 @@ class kde(object):
         return result
 
 
-def SearchSorted(a, v, side='left'):
-    assert side in ['left', 'right']
-    if side == 'left':
-        return torch.sum(v[..., None] > a, dim=-1)
-    else:
-        return torch.sum(v[..., None] >= a, dim=-1)
-
-
 class RQspline(nn.Module):
     '''
     Ratianal quadratic spline.
@@ -233,7 +225,7 @@ class RQspline(nn.Module):
         # x: (ndata, ndim) 2d array
         xx, yy, delta = self._prepare() #(ndim, nknot)
 
-        index = SearchSorted(xx, x)
+        index = torch.searchsorted(xx.detach(), x.T.contiguous().detach()).T
         y = torch.zeros_like(x)
         logderiv = torch.zeros_like(x)
 
@@ -265,7 +257,7 @@ class RQspline(nn.Module):
     def inverse(self, y):
         xx, yy, delta = self._prepare()
 
-        index = SearchSorted(yy, y)
+        index = torch.searchsorted(yy.detach(), y.T.contiguous().detach()).T
         x = torch.zeros_like(y)
         logderiv = torch.zeros_like(y)
 
@@ -302,7 +294,7 @@ class RQspline(nn.Module):
         return x, logderiv
 
 
-def estimate_knots_gaussian(data, interp_nbin, above_noise, edge_bins=4, derivclip=None, extrapolate='regression', alpha=0, KDE=True, bw_factor=1, batchsize=None):
+def estimate_knots_gaussian(data, interp_nbin, above_noise, edge_bins=0, derivclip=None, extrapolate='regression', alpha=(0.9, 0.99), KDE=True, bw_factor=1, batchsize=None):
 
     start = 100 / (interp_nbin-2*edge_bins+1)
     end = 100-start
@@ -376,8 +368,10 @@ def estimate_knots_gaussian(data, interp_nbin, above_noise, edge_bins=4, derivcl
                     endx -= x[i,-1]
                     deriv[i,-1] = torch.sum(endx*endy) / torch.sum(endx*endx)
 
-            y[i] = (1-alpha) * y[i] + alpha * x[i]
-            deriv[i] = (1-alpha) * deriv[i] + alpha
+            y[i] = (1-alpha[0]) * y[i] + alpha[0] * x[i]
+            deriv[i,1:-1] = (1-alpha[0]) * deriv[i,1:-1] + alpha[0]
+            deriv[i,0] = (1-alpha[1]) * deriv[i,0] + alpha[1]
+            deriv[i,-1] = (1-alpha[1]) * deriv[i,-1] + alpha[1]
 
             if derivclip is not None and derivclip > 1:
                 deriv[i,0] = torch.clamp(deriv[i,0], 1/derivclip, derivclip)
@@ -396,7 +390,7 @@ def estimate_knots_gaussian(data, interp_nbin, above_noise, edge_bins=4, derivcl
     return x, y, deriv
 
 
-def estimate_knots(data, sample, interp_nbin, above_noise, edge_bins=4, derivclip=None, extrapolate='regression', alpha=0, KDE=True, bw_factor_data=1, bw_factor_sample=1, batchsize=None):
+def estimate_knots(data, sample, interp_nbin, above_noise, edge_bins=4, derivclip=1, extrapolate='regression', alpha=(0, 0), KDE=True, bw_factor_data=1, bw_factor_sample=1, batchsize=None):
 
     start = 100 / (interp_nbin-2*edge_bins+1)
     end = 100-start
@@ -495,8 +489,10 @@ def estimate_knots(data, sample, interp_nbin, above_noise, edge_bins=4, derivcli
                     endy = Percentile(sample[sample[:,i]>y[i,-1],i], torch.linspace(10,100,10, device=data.device)) - y[i,-1]
                     deriv[i,-1] = torch.sum(endy*endy) / torch.sum(endx*endy)
 
-            y[i] = (1-alpha) * y[i] + alpha * x[i]
-            deriv[i] = (1-alpha) * deriv[i] + alpha
+            y[i] = (1-alpha[0]) * y[i] + alpha[0] * x[i]
+            deriv[i,1:-1] = (1-alpha[0]) * deriv[i,1:-1] + alpha[0]
+            deriv[i,0] = (1-alpha[1]) * deriv[i,0] + alpha[1]
+            deriv[i,-1] = (1-alpha[1]) * deriv[i,-1] + alpha[1]
 
             if derivclip is not None and derivclip > 1:
                 deriv[i,0] = torch.clamp(deriv[i,0], 1/derivclip, derivclip)
@@ -512,4 +508,3 @@ def estimate_knots(data, sample, interp_nbin, above_noise, edge_bins=4, derivcli
                 dx = x[i,1:] - x[i,:-1]
 
     return x, y, deriv
-
