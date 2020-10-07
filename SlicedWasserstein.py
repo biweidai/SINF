@@ -88,7 +88,7 @@ def noise_WD(ndata, threshold=0.5, Npercentile=None, N=100, p=2, device=torch.de
     return (WD[floored]*(position-floored) + WD[ceiled]*(1+floored-position)).item()
 
 
-def maxSWDdirection(x, x2='gaussian', n_component=None, maxiter=200, Npercentile=None, p=2, eps=1e-6):
+def maxSWDdirection(x, x2='gaussian', n_component=None, maxiter=200, Npercentile=None, p=2, eps=1e-6, wi=None):
 
     #if x2 is None, find the direction of max sliced Wasserstein distance between x and gaussian
     #if x2 is not None, it needs to have the same shape as x
@@ -116,7 +116,10 @@ def maxSWDdirection(x, x2='gaussian', n_component=None, maxiter=200, Npercentile
     
     
     #initialize w. algorithm from https://arxiv.org/pdf/math-ph/0609050.pdf
-    wi = torch.randn(ndim, n_component, device=x.device)
+    if wi is None:
+        wi = torch.randn(ndim, n_component, device=x.device)
+    else:
+        assert wi.shape[0] == ndim and wi.shape[1] == n_component
     Q, R = torch.qr(wi)
     L = torch.sign(torch.diag(R))
     w = (Q * L).T
@@ -130,42 +133,42 @@ def maxSWDdirection(x, x2='gaussian', n_component=None, maxiter=200, Npercentile
     #note that here w = X.T
     #use backtracking line search
     w1 = w.clone()
-    w.requires_grad_(True)
-    if x2 is 'gaussian':
-        loss = -SlicedWassersteinDistanceG(w @ x.T, pg, q, p)
-    else:
-        loss = -SlicedWassersteinDistance(w @ x.T, w @ x2.T, q, p)
-    loss1 = loss
     for i in range(maxiter):
+        w.requires_grad_(True)
+        if x2 is 'gaussian':
+            loss = -SlicedWassersteinDistanceG(w @ x.T, pg, q, p)
+        else:
+            loss = -SlicedWassersteinDistance(w @ x.T, w @ x2.T, q, p)
+        loss1 = loss
         GT = torch.autograd.grad(loss, w)[0]
         w.requires_grad_(False)
-        WT = w.T @ GT - GT.T @ w
-        e = - w @ WT #dw/dlr
-        m = torch.sum(GT * e) #dloss/dlr
+        with torch.no_grad():
+            WT = w.T @ GT - GT.T @ w
+            e = - w @ WT #dw/dlr
+            m = torch.sum(GT * e) #dloss/dlr
 
-        lr /= down_fac
-        while loss1 > loss + c*m*lr:
-            lr *= down_fac
-            if 2*n_component < ndim:
-                UT = torch.cat((GT, w), dim=0).double()
-                V = torch.cat((w.T, -GT.T), dim=1).double()
-                w1 = (w.double() - lr * w.double() @ V @ torch.pinverse(torch.eye(2*n_component, dtype=torch.double, device=x.device)+lr/2*UT@V) @ UT).to(torch.get_default_dtype())
-            else:
-                w1 = (w.double() @ (torch.eye(ndim, dtype=torch.double, device=x.device)-lr/2*WT.double()) @ torch.pinverse(torch.eye(ndim, dtype=torch.double, device=x.device)+lr/2*WT.double())).to(torch.get_default_dtype())
+            lr /= down_fac
+            while loss1 > loss + c*m*lr:
+                lr *= down_fac
+                if 2*n_component < ndim:
+                    UT = torch.cat((GT, w), dim=0).double()
+                    V = torch.cat((w.T, -GT.T), dim=1).double()
+                    w1 = (w.double() - lr * w.double() @ V @ torch.pinverse(torch.eye(2*n_component, dtype=torch.double, device=x.device)+lr/2*UT@V) @ UT).to(torch.get_default_dtype())
+                else:
+                    w1 = (w.double() @ (torch.eye(ndim, dtype=torch.double, device=x.device)-lr/2*WT.double()) @ torch.pinverse(torch.eye(ndim, dtype=torch.double, device=x.device)+lr/2*WT.double())).to(torch.get_default_dtype())
             
-            w1.requires_grad_(True)
-            if x2 is 'gaussian':
-                loss1 = -SlicedWassersteinDistanceG(w1 @ x.T, pg, q, p)
-            else:
-                loss1 = -SlicedWassersteinDistance(w1 @ x.T, w1 @ x2.T, q, p)
+                if x2 is 'gaussian':
+                    loss1 = -SlicedWassersteinDistanceG(w1 @ x.T, pg, q, p)
+                else:
+                    loss1 = -SlicedWassersteinDistance(w1 @ x.T, w1 @ x2.T, q, p)
         
-        if torch.max(torch.abs(w1-w)) < eps:
+            if torch.max(torch.abs(w1-w)) < eps:
+                w = w1
+                break
+        
+            lr *= up_fac
             w = w1
-            break
-        
-        lr *= up_fac
-        loss = loss1
-        w = w1
+
     if x2 is 'gaussian':
         WD = SlicedWassersteinDistanceG(w @ x.T, pg, q, p, perdim=False)
     else:
@@ -212,6 +215,7 @@ def SlicedWasserstein(data, second='gaussian', Nslice=1000, p=2, batchsize=None)
                 second0 = second @ direction
                 SWD[i * batchsize: (i+1) * batchsize] = SlicedWassersteinDistance(data0.T, second0.T, None, p, perdim=False)
             i += 1
+        SWD = torch.mean(SWD)
 
     return SWD ** (1/p)
 
@@ -320,7 +324,8 @@ class Stiefel_SGD(optim.Optimizer):
                 if 2*n_component < n_dim:
                     U = torch.cat((G, X), dim=1)
                     VT = torch.cat((X.T, -G.T), dim=0)
-                    p.data.add_(-group['lr'], (U@torch.pinverse(torch.eye(2*n_component, dtype=torch.double, device=X.device)+group['lr']/2*VT@U)@VT@X).type(dtype))
+                    #p.data.add_(-group['lr'], (U@torch.pinverse(torch.eye(2*n_component, dtype=torch.double, device=X.device)+group['lr']/2.*VT@U)@VT@X).type(dtype))
+                    p.data = (X - group['lr'] * U@torch.pinverse(torch.eye(2*n_component, dtype=torch.double, device=X.device)+group['lr']/2.*VT@U)@VT@X).type(dtype)
                 else:
                     A = G@X.T - X@G.T
                     p.data = (torch.pinverse(torch.eye(n_dim, dtype=torch.double, device=X.device)+group['lr']/2*A) @ (torch.eye(n_dim, dtype=torch.double, device=X.device)-group['lr']/2*A) @ X).type(dtype)
