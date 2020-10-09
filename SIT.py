@@ -741,6 +741,51 @@ class ConditionalSlicedTransport_discrete(nn.Module):
 
 
 
+def transform_batch_layer(layer, data, batchsize, logj=None, direction='forward', param=None):
+    
+    assert direction in ['forward', 'inverse']
+    
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+    layer = layer.to(device)
+    
+    if logj is None:
+        logj = torch.zeros(len(data), device=data.device)
+    
+    i = 0
+    while i * batchsize < len(data):
+        if direction == 'forward':
+            data1, logj1 = layer(data[i*batchsize:(i+1)*batchsize].to(device), param=param)
+        else:
+            data1, logj1 = layer.inverse(data[i*batchsize:(i+1)*batchsize].to(device), param=param)
+        data[i*batchsize:(i+1)*batchsize] = data1.to(data.device)
+        logj[i*batchsize:(i+1)*batchsize] = logj[i*batchsize:(i+1)*batchsize] + logj1.to(data.device)
+        i += 1
+    
+    return data, logj
+
+
+
+def transform_batch_model(model, data, batchsize, logj=None, start=0, end=None, param=None):
+    
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+    model = model.to(device)
+    
+    if logj is None:
+        logj = torch.zeros(len(data), device=data.device)
+    
+    i = 0
+    while i * batchsize < len(data):
+        data1, logj1 = model.transform(data[i*batchsize:(i+1)*batchsize].to(device), start=start, end=end, param=param)
+        data[i*batchsize:(i+1)*batchsize] = data1.to(data.device)
+        logj[i*batchsize:(i+1)*batchsize] = logj[i*batchsize:(i+1)*batchsize] + logj1.to(data.device)
+        i += 1
+    
+    return data, logj
+
+
+
 def add_one_layer_inverse(model, data, sample, n_component, nsample_wT, nsample_spline, layer_type='regular', shape=None, kernel_size=None, shift=None, interp_nbin=400, MSWD_p=2, MSWD_max_iter=200, edge_bins=10, derivclip=1, extrapolate='regression', alpha=(0., 0.), noise_threshold=0, KDE=True, bw_factor_data=1, bw_factor_sample=1, batchsize=None, verbose=True, device=torch.device('cuda'), sample_test=None):
 
     assert layer_type in ['regular', 'patch']
@@ -802,8 +847,5 @@ def add_one_layer_inverse(model, data, sample, n_component, nsample_wT, nsample_
         print ('Nlayer:', len(model.layer), 'Time:', time.time()-t, layer_type)
         print ()
 
-    if sample_test is None:
-        return model, sample
-    else:
-        return model, sample, sample_test
+    return model, sample, sample_test
 

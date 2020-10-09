@@ -12,36 +12,28 @@ pip install -r requirements.txt
 
 ## Training
 
-To train the models in the paper on different datasets, run the following commands:
+To train SIG and GIS, run the following commands:
 
 ```train
-python SIGtrain_MNIST_hierarchy.py
-python SIGtrain_FashionMNIST_hierarchy.py
-python SIGtrain_CIFAR10_hierarchy.py
-python SIGtrain_CelebA_hierarchy.py
-python SIGtrain_FashionMNIST.py
-python SIGtrain_CelebA_AE64.py
+python SIG.py --dataset DATASET --seed SEED --save SAVING_ADDRESS   
+python GIS.py --dataset DATASET --seed SEED --save SAVING_ADDRESS
 ```
 
 ## Evaluation
 
-All the evaluation codes are in SIG.ipynb
-
-
-## Pre-trained Models
-
-You can download pretrained models [here](https://zenodo.org/record/3890090)
+All the evaluation codes of SIG are in SIG.ipynb.
+The FID score of SIG samples can also be evaluated on the fly with the "--evaluateFID" argument. 
 
 
 ## Results
 
-Our model achieves the following performance on :
+SIG achieves the following performance on :
 
 ### FID score
 
 |       MNIST       |      Fashion      |      CIFAR10      |  CelebA (SIG+AE)  |
 | ----------------- | ----------------- | ----------------- | ----------------- |
-|        5.5        |       16.0        |       91.7        |       48.1        |
+|        5.5        |       16.0        |   71.6 (updated)  |       48.1        |
 
 ### OoD detection (AUROC on models trained on FashionMNIST)
 
