@@ -5,5 +5,3 @@ imageio
 PIL
 torch
 torchvision
-tensorflow-gpu==1.15
-tensorflow-hub
