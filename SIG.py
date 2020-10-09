@@ -1,6 +1,7 @@
 from SIT import *
 from load_data import * 
 import argparse
+from fid_score import evaluate_fid_score
 
 def toimage(sample, shape):
     sample = (sample+1)*128
