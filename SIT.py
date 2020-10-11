@@ -6,6 +6,8 @@ import math
 from SlicedWasserstein import *
 from RQspline import *
 
+
+
 class SIT(nn.Module):
 
     #sliced iterative transport model
@@ -420,17 +422,23 @@ class PatchSlicedTransport(nn.Module):
 
     #1 layer of patch based sliced transport 
 
-    def __init__(self, shape=[28,28,1], kernel_size=[4,4], shift=[0,0], n_component=None, interp_nbin=200):
+    def __init__(self, shape=[28,28,1], kernel=[4,4,1], shift=[0,0], n_component=None, interp_nbin=200):
 
         assert shift[0] >= 0 and shift[0] < shape[0]
         assert shift[1] >= 0 and shift[1] < shape[1]
+        assert len(shape) == 3 and len(kernel) == 3 and len(shift) == 2
+        assert (kernel[0] <= shape[0]) and (kernel[1] <= shape[1])
+        if shape[-1] == 1:
+            assert kernel[-1] == 1
+        else:
+            assert (kernel[-1] == 1) or (kernel[-1] == shape[-1])
 
         super().__init__()
         self.register_buffer('shape', torch.tensor(shape))
-        self.register_buffer('kernel', torch.tensor(kernel_size)) 
+        self.register_buffer('kernel', torch.tensor(kernel)) 
         self.register_buffer('shift', torch.tensor(shift))
         
-        self.ndim_sub = (self.kernel[0]*self.kernel[1]*shape[2]).item()
+        self.ndim_sub = (self.kernel[0]*self.kernel[1]*self.kernel[2]).item()
 
         if n_component is None:
             self.n_component = self.ndim_sub 
@@ -439,9 +447,10 @@ class PatchSlicedTransport(nn.Module):
             assert n_component <= self.ndim_sub
         self.interp_nbin = interp_nbin
         
-        self.Nkernel_x = (self.shape[0] // self.kernel[0]).item()
-        self.Nkernel_y = (self.shape[1] // self.kernel[1]).item()
-        self.Nkernel = self.Nkernel_x * self.Nkernel_y
+        self.Nkernel_H = (self.shape[0] // self.kernel[0]).item()
+        self.Nkernel_W = (self.shape[1] // self.kernel[1]).item()
+        self.Nkernel_C = (self.shape[2] // self.kernel[2]).item()
+        self.Nkernel = self.Nkernel_H * self.Nkernel_W * self.Nkernel_C 
 
         wT = torch.zeros(self.Nkernel, self.ndim_sub, self.n_component)
         for i in range(self.Nkernel):
@@ -466,21 +475,25 @@ class PatchSlicedTransport(nn.Module):
 
         SWD = torch.zeros(self.Nkernel, self.n_component, device=data.device)
 
-        for j in range(self.Nkernel_y):
-            for i in range(self.Nkernel_x):
-                dim0 = dim[i*self.kernel[0]:(i+1)*self.kernel[0], j*self.kernel[1]:(j+1)*self.kernel[1], :].reshape(-1)
-                data0 = data[:, dim0]
-                index = j*self.Nkernel_x+i
-                if sample is 'gaussian':
-                    sample0 = 'gaussian'
-                else:
-                    sample0 = sample[:, dim0]
-                wT, SWD[index] = maxSWDdirection(data0, sample0, n_component=self.n_component, maxiter=MSWD_max_iter, p=MSWD_p)
-                del data0, sample0
-                with torch.no_grad():
-                    SWD[index], indices = torch.sort(SWD[index], descending=True)
-                    wT = wT[:, indices]
-                    self.wT[index] = torch.qr(wT)[0]
+        for h in range(self.Nkernel_H):
+            for w in range(self.Nkernel_W):
+                for c in range(self.Nkernel_C):
+                    if self.Nkernel_C == 1:
+                        dim0 = dim[h*self.kernel[0]:(h+1)*self.kernel[0], w*self.kernel[1]:(w+1)*self.kernel[1], :].reshape(-1)
+                    else:
+                        dim0 = dim[h*self.kernel[0]:(h+1)*self.kernel[0], w*self.kernel[1]:(w+1)*self.kernel[1], c].reshape(-1)
+                    index = h*self.Nkernel_W*self.Nkernel_C + w*self.Nkernel_C + c
+                    data0 = data[:, dim0]
+                    if sample is 'gaussian':
+                        sample0 = 'gaussian'
+                    else:
+                        sample0 = sample[:, dim0]
+                    wT, SWD[index] = maxSWDdirection(data0, sample0, n_component=self.n_component, maxiter=MSWD_max_iter, p=MSWD_p)
+                    del data0, sample0
+                    with torch.no_grad():
+                        SWD[index], indices = torch.sort(SWD[index], descending=True)
+                        wT = wT[:, indices]
+                        self.wT[index] = torch.qr(wT)[0]
 
         if verbose:
             t = end_timing(tstart)
@@ -496,12 +509,16 @@ class PatchSlicedTransport(nn.Module):
         Ntransform = self.Nkernel*self.n_component
         wT = torch.zeros(torch.prod(self.shape), Ntransform, device=self.wT.device)
 
-        for indexy in range(self.Nkernel_y):
-            for indexx in range(self.Nkernel_x):
-                index = indexy*self.Nkernel_x+indexx
-                dim0 = dim[indexx*self.kernel[0]:(indexx+1)*self.kernel[0], indexy*self.kernel[1]:(indexy+1)*self.kernel[1], :].reshape(-1)
-                wT[dim0, self.n_component*index:self.n_component*(index+1)] = self.wT[index]
-
+        for h in range(self.Nkernel_H):
+            for w in range(self.Nkernel_W):
+                for c in range(self.Nkernel_C):
+                    if self.Nkernel_C == 1:
+                        dim0 = dim[h*self.kernel[0]:(h+1)*self.kernel[0], w*self.kernel[1]:(w+1)*self.kernel[1], :].reshape(-1)
+                    else:
+                        dim0 = dim[h*self.kernel[0]:(h+1)*self.kernel[0], w*self.kernel[1]:(w+1)*self.kernel[1], c].reshape(-1)
+                    index = h*self.Nkernel_W*self.Nkernel_C + w*self.Nkernel_C + c
+                    wT[dim0, self.n_component*index:self.n_component*(index+1)] = self.wT[index]
+                
         return wT
 
 
@@ -786,26 +803,27 @@ def transform_batch_model(model, data, batchsize, logj=None, start=0, end=None, 
 
 
 
-def add_one_layer_inverse(model, data, sample, n_component, nsample_wT, nsample_spline, layer_type='regular', shape=None, kernel_size=None, shift=None, interp_nbin=400, MSWD_p=2, MSWD_max_iter=200, edge_bins=10, derivclip=1, extrapolate='regression', alpha=(0., 0.), noise_threshold=0, KDE=True, bw_factor_data=1, bw_factor_sample=1, batchsize=None, verbose=True, device=torch.device('cuda'), sample_test=None):
+def add_one_layer_inverse(model, data, sample, n_component, nsample_wT, nsample_spline, layer_type='regular', shape=None, kernel=None, shift=None, interp_nbin=400, MSWD_p=2, MSWD_max_iter=200, edge_bins=10, derivclip=1, extrapolate='regression', alpha=(0., 0.), noise_threshold=0, KDE=False, bw_factor_data=1, bw_factor_sample=1, batchsize=None, verbose=True, device=torch.device('cuda'), sample_test=None):
 
     assert layer_type in ['regular', 'patch']
     if layer_type == 'patch':
         assert shape is not None
-        assert kernel_size is not None
+        assert kernel is not None
         assert shift is not None
  
     assert nsample_wT <= len(data)
     assert len(sample) >= nsample_wT 
     assert len(sample) >= nsample_spline 
 
-    t = time.time()
+    if verbose:
+        tstart = start_timing()
 
     sample_device = sample.device
     sample = sample[torch.randperm(sample.shape[0])]
     if layer_type == 'regular':
         layer = SlicedTransport(ndim=model.ndim, n_component=n_component, interp_nbin=interp_nbin).requires_grad_(False).to(device)
     elif layer_type == 'patch':
-        layer = PatchSlicedTransport(shape=shape, kernel_size=kernel_size, shift=shift, n_component=n_component, interp_nbin=interp_nbin).requires_grad_(False).to(device)
+        layer = PatchSlicedTransport(shape=shape, kernel=kernel, shift=shift, n_component=n_component, interp_nbin=interp_nbin).requires_grad_(False).to(device)
 
     if len(data) == nsample_wT:
         data1 = data.to(device)
@@ -844,7 +862,8 @@ def add_one_layer_inverse(model, data, sample, n_component, nsample_wT, nsample_
 
         model.add_layer(layer.to(sample_device), position=0)
     if verbose:
-        print ('Nlayer:', len(model.layer), 'Time:', time.time()-t, layer_type)
+        t = end_timing(tstart)
+        print ('Nlayer:', len(model.layer), 'Time:', t, layer_type)
         print ()
 
     return model, sample, sample_test

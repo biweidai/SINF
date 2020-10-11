@@ -92,14 +92,14 @@ if not args.nohierarchy:
     
     for patch in patch_size:
         n_component = K_factor * patch
-        kernel_size = [patch, patch]
+        kernel = [patch, patch]
         for _ in range(Niter):
             if patch == shape[0]:
                 model, sample, sample_test = add_one_layer_inverse(model, data_train, sample, n_component, nsample_wT, nsample_spline, layer_type='regular', batchsize=batchsize, sample_test=sample_test)
             else:
                 shift = torch.randint(32, (2,)).tolist()
                 model, sample, sample_test = add_one_layer_inverse(model, data_train, sample, n_component, nsample_wT, nsample_spline, layer_type='patch',
-                                                                   shape=shape, kernel_size=kernel_size, shift=shift, batchsize=batchsize, sample_test=sample_test)
+                                                                   shape=shape, kernel=kernel, shift=shift, batchsize=batchsize, sample_test=sample_test)
             if len(model.layer) % update_iteration == 0:
                 print()
                 print('Finished %d iterations' % len(model.layer), 'Total Time:', time.time()-t_total)
