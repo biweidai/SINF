@@ -82,24 +82,38 @@ else:
 
 if not args.nohierarchy:
     if args.dataset == 'cifar10':
-        patch_size = [32, 16, 8, 7, 6, 5, 4, 3, 2]
-        K_factor = 2 #n_component = K_factor * patch_size
-        Niter = 200 #number of iterations for each patch_size
+        patch_size = [[32,32,3], 
+                      [16,16,3],
+                      [8,8,3],
+                      [7,7,3],
+                      [6,6,3],
+                      [5,5,3],
+                      [4,4,3],
+                      [3,3,3],
+                      [2,2,3]]
+        K_factor = 2 #n_component = K_factor * patch_size[0]
+        Niter = 200 #number of iterations for each patch_size[0]
     elif args.dataset in ['mnist', 'fmnist']:
-        patch_size = [28, 14, 7, 6, 5, 4, 3, 2]
-        K_factor = 2 #n_component = K_factor * patch_size
-        Niter = 100 #number of iterations for each patch_size
+        patch_size = [[28,28,1], 
+                      [14,14,1],
+                      [7,7,1],
+                      [6,6,1],
+                      [5,5,1],
+                      [4,4,1],
+                      [3,3,1],
+                      [2,2,1]]
+        K_factor = 2 #n_component = K_factor * patch_size[0]
+        Niter = 100 #number of iterations for each patch_size[0]
     
     for patch in patch_size:
-        n_component = K_factor * patch
-        kernel = [patch, patch]
+        n_component = K_factor * patch[0]
         for _ in range(Niter):
-            if patch == shape[0]:
+            if patch[0] == shape[0]:
                 model, sample, sample_test = add_one_layer_inverse(model, data_train, sample, n_component, nsample_wT, nsample_spline, layer_type='regular', batchsize=batchsize, sample_test=sample_test)
             else:
                 shift = torch.randint(32, (2,)).tolist()
                 model, sample, sample_test = add_one_layer_inverse(model, data_train, sample, n_component, nsample_wT, nsample_spline, layer_type='patch',
-                                                                   shape=shape, kernel=kernel, shift=shift, batchsize=batchsize, sample_test=sample_test)
+                                                                   shape=shape, kernel=patch, shift=shift, batchsize=batchsize, sample_test=sample_test)
             if len(model.layer) % update_iteration == 0:
                 print()
                 print('Finished %d iterations' % len(model.layer), 'Total Time:', time.time()-t_total)
