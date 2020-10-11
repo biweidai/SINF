@@ -43,6 +43,14 @@ def load_data_cifar10():
 
 
 
+def load_data_celeba(flag='training'):
+    assert flag in ['training', 'validation', 'test']
+    if flag == 'training':
+        return np.load('/global/scratch/biwei/data/CelebA/CelebA_train.npy')
+    elif flag == 'test':
+        return np.load('/global/scratch/biwei/data/CelebA/CelebA_test.npy') 
+
+'''
 def load_data_celeba(flag='training', side_length=None, num=None):
     data_dir = "./data"
     dir_path = os.path.join(data_dir, 'img_align_celeba')
@@ -77,7 +85,7 @@ def load_data_celeba(flag='training', side_length=None, num=None):
     imgs = np.concatenate(imgs, 0)
 
     return imgs.astype(np.uint8) 
-
+'''
 
 
 def load_data_power():

@@ -225,7 +225,7 @@ class RQspline(nn.Module):
         # x: (ndata, ndim) 2d array
         xx, yy, delta = self._prepare() #(ndim, nknot)
 
-        index = torch.searchsorted(xx.detach(), x.T.contiguous().detach()).T
+        index = torch.searchsorted(xx, x.T.contiguous()).T
         y = torch.zeros_like(x)
         logderiv = torch.zeros_like(x)
 
@@ -257,7 +257,7 @@ class RQspline(nn.Module):
     def inverse(self, y):
         xx, yy, delta = self._prepare()
 
-        index = torch.searchsorted(yy.detach(), y.T.contiguous().detach()).T
+        index = torch.searchsorted(yy, y.T.contiguous()).T
         x = torch.zeros_like(y)
         logderiv = torch.zeros_like(y)
 
@@ -405,7 +405,9 @@ def estimate_knots(data, sample, interp_nbin, above_noise, edge_bins=4, derivcli
         q = torch.cat((q0,q1,q2), dim=0)
     else:
         q = q1
-    y = Percentile(sample.T, q).to(torch.get_default_dtype())
+    y = torch.zeros(sample.shape[1], interp_nbin, device=sample.device)
+    for i in range(len(y)):
+        y[i] = Percentile(sample[:,i], q)
     x = y.clone()
     deriv = torch.ones_like(y)
     
@@ -413,7 +415,10 @@ def estimate_knots(data, sample, interp_nbin, above_noise, edge_bins=4, derivcli
         invq = torch.cat((torch.linspace(0, q[0], edge_bins, device=data.device)[:-1], q, torch.linspace(q[-1], 100, edge_bins, device=data.device)[1:]), dim=0)
     else:
         invq = q
-    invy = Percentile(data.T, invq).to(torch.get_default_dtype())
+    #invy = Percentile(data.T, invq).to(torch.get_default_dtype())
+    invy = torch.zeros(data.shape[1], interp_nbin, device=data.device)
+    for i in range(len(invy)):
+        invy[i] = Percentile(data[:,i], invq)
 
     for i in range(data.shape[1]):
         if above_noise[i]:

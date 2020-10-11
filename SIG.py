@@ -1,6 +1,7 @@
 from SIT import *
 from load_data import * 
 import argparse
+import time
 from fid_score import evaluate_fid_score
 
 def preprocess(data):
@@ -16,7 +17,9 @@ def toimage(sample, shape):
     return sample
 
 
-def add_one_layer_inverse(model, data, sample, n_component, nsample_wT, nsample_spline, layer_type='regular', shape=None, kernel=None, shift=None, interp_nbin=400, MSWD_p=2, MSWD_max_iter=200, edge_bins=10, derivclip=1, extrapolate='regression', alpha=(0., 0.), noise_threshold=0, KDE=False, bw_factor_data=1, bw_factor_sample=1, batchsize=None, verbose=True, device=torch.device('cuda'), sample_test=None):
+def add_one_layer_inverse(model, data, sample, n_component, nsample_wT, nsample_spline, layer_type='regular', shape=None, kernel=None, shift=None, interp_nbin=400, MSWD_p=2, MSWD_max_iter=200, edge_bins=10, derivclip=1, extrapolate='regression', alpha=(0., 0.), noise_threshold=0, KDE=False, bw_factor_data=1, bw_factor_sample=1, batchsize=None, verbose=True, sample_test=None, put_data_on_disk=False):
+
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     assert layer_type in ['regular', 'patch']
     if layer_type == 'patch':
@@ -24,55 +27,96 @@ def add_one_layer_inverse(model, data, sample, n_component, nsample_wT, nsample_
         assert kernel is not None
         assert shift is not None
  
-    assert nsample_wT <= len(data)
-    assert len(sample) >= nsample_wT 
-    assert len(sample) >= nsample_spline 
-
     if verbose:
         tstart = start_timing()
 
-    sample_device = sample.device
-    sample = sample[torch.randperm(sample.shape[0])]
+    if put_data_on_disk:
+        assert isinstance(data, str) and isinstance(sample, str)
+        if sample_test is not None:
+            assert isinstance(sample_test, str)
+        sample_address = sample
+        data_address = data
+
+        sample1 = np.lib.format.open_memmap(sample_address)
+        perm_sample = np.random.permutation(len(sample1))
+        sample1 = torch.tensor(sample1[np.sort(perm_sample[:nsample_wT])]).to(device)
+        
+        data1 = np.lib.format.open_memmap(data_address)
+        perm_data = np.random.permutation(len(data1))
+        data1 = preprocess(data1[np.sort(perm_data[:nsample_wT])]).to(device)
+
+    else:
+        assert isinstance(data, torch.Tensor) and isinstance(sample, torch.Tensor)
+        sample = sample[torch.randperm(sample.shape[0], device=sample.device)]
+        sample1 = sample[:nsample_wT].to(device)
+        
+        data = data[torch.randperm(data.shape[0], device=data.device)]
+        data1 = data[:nsample_wT].to(device)
+
+    assert len(sample1) == len(data1)
+
     if layer_type == 'regular':
         layer = SlicedTransport(ndim=model.ndim, n_component=n_component, interp_nbin=interp_nbin).requires_grad_(False).to(device)
     elif layer_type == 'patch':
         layer = PatchSlicedTransport(shape=shape, kernel=kernel, shift=shift, n_component=n_component, interp_nbin=interp_nbin).requires_grad_(False).to(device)
 
-    if len(data) == nsample_wT:
-        data1 = data.to(device)
-    else:
-        data = data[torch.randperm(data.shape[0])]
-        data1 = data[:nsample_wT].to(device)
-    sample1 = sample[:nsample_wT].to(device)
-
     layer.fit_wT(data1, sample=sample1, MSWD_p=MSWD_p, MSWD_max_iter=MSWD_max_iter, verbose=verbose)
 
-    if len(data) <= nsample_spline:
-        data1 = data.to(device)
+    del data1, sample1
+
+    if put_data_on_disk:
+        sample1 = np.lib.format.open_memmap(sample_address)
+        sample1 = torch.tensor(sample1[np.sort(perm_sample[-nsample_spline:])]).to(device)
+        data1 = np.lib.format.open_memmap(data_address)
+        data1 = preprocess(data1[np.sort(perm_data[-nsample_spline:])]).to(device)
     else:
+        sample1 = sample[-nsample_spline:].to(device)
         data1 = data[-nsample_spline:].to(device)
-    sample1 = sample[-nsample_spline:].to(device)
+
     SWD = layer.fit_spline_inverse(data1, sample1, edge_bins=edge_bins, derivclip=derivclip, extrapolate=extrapolate, alpha=alpha, noise_threshold=noise_threshold,
                                    MSWD_p=MSWD_p, KDE=KDE, bw_factor_data=bw_factor_data, bw_factor_sample=bw_factor_sample, batchsize=batchsize, verbose=verbose)
+
     del data1, sample1
+    if put_data_on_disk:
+        del perm_sample, perm_data
 
     if (SWD>noise_threshold).any():
 
-        if batchsize is None:
-            sample = layer.inverse(sample.to(device))[0].to(sample_device)
-            sample_test = layer.inverse(sample_test.to(device))[0].to(sample_device)
-        else:
-            j = 0
-            while j * batchsize < len(sample):
-                sample[j*batchsize:(j+1)*batchsize] = layer.inverse(sample[j*batchsize:(j+1)*batchsize].to(device))[0].to(sample_device)
-                j += 1
-            if sample_test is not None:
-                j = 0
-                while j * batchsize < len(sample_test):
-                    sample_test[j*batchsize:(j+1)*batchsize] = layer.inverse(sample_test[j*batchsize:(j+1)*batchsize].to(device))[0].to(sample_device)
-                    j += 1
+        if put_data_on_disk:
+            if batchsize is None:
+                sample = torch.tensor(np.load(sample_address))
+                sample = layer.inverse(sample.to(device))[0].cpu().numpy()
+                np.save(sample_address, sample)
+                del sample
+            else:
+                sample = np.lib.format.open_memmap(sample_address, mode='r+') 
+                i = 0
+                while i * batchsize < len(sample):
+                    sample[i*batchsize:(i+1)*batchsize] = layer.inverse(torch.tensor(sample[i*batchsize:(i+1)*batchsize]).to(device))[0].cpu().numpy()
+                    i += 1
+                del sample
+                if sample_test is not None:
+                    sample_test_address = sample_test
+                    sample_test = np.lib.format.open_memmap(sample_test_address, mode='r+') 
+                    i = 0
+                    while i * batchsize < len(sample_test):
+                        sample_test[i*batchsize:(i+1)*batchsize] = layer.inverse(torch.tensor(sample_test[i*batchsize:(i+1)*batchsize]).to(device))[0].cpu().numpy()
+                        i += 1
+                    del sample_test
+                    sample_test = sample_test_address
+            sample = sample_address
 
-        model.add_layer(layer.to(sample_device), position=0)
+        else:
+            if batchsize is None:
+                sample = layer.inverse(sample.to(device))[0].to(sample.device)
+                if sample_test is not None:
+                    sample_test = layer.inverse(sample_test.to(device))[0].to(sample_test.device)
+            else:
+                sample = transform_batch_layer(layer, sample, batchsize, direction='inverse')[0]
+                if sample_test is not None:
+                    sample_test = transform_batch_layer(layer, sample_test, batchsize, direction='inverse')[0]
+
+        model.add_layer(layer.cpu(), position=0)
     if verbose:
         t = end_timing(tstart)
         print ('Nlayer:', len(model.layer), 'Time:', t, layer_type)
@@ -86,7 +130,7 @@ parser = argparse.ArgumentParser()
 
 # data
 parser.add_argument('--dataset', type=str, default='mnist',
-                    choices=['mnist', 'fmnist', 'cifar10'],
+                    choices=['mnist', 'fmnist', 'cifar10', 'celeba'],
                     help='Name of dataset to use.')
 
 parser.add_argument('--evaluateFID', action='store_true',
@@ -97,6 +141,9 @@ parser.add_argument('--seed', type=int, default=738,
 
 parser.add_argument('--save', type=str, default='./',
                     help='Where to save the trained model.')
+
+parser.add_argument('--put_data_on_disk', type=str, 
+                    help='Temporary address to save the data and samples. Only use this when the dataset is large and cannot load in the memory (e.g. CelebA).')
 
 parser.add_argument('--nohierarchy', action='store_true',
                     help='Whether to use hierarchical patch based modeling strategy.')
@@ -115,29 +162,45 @@ device = torch.device('cuda')
 if args.dataset == 'mnist':
     data_train, data_test = load_data_mnist()
     shape = [28,28,1]
-    nsample_spline = 5*len(data_train)
 elif args.dataset == 'fmnist':
     data_train, data_test = load_data_fmnist()
     shape = [28,28,1]
-    nsample_spline = 5*len(data_train)
 elif args.dataset == 'cifar10':
     data_train, data_test = load_data_cifar10()
     shape = [32,32,3]
-    nsample_spline = 5*len(data_train)
+elif args.dataset == 'celeba':
+    data_train = load_data_celeba(flag='training')
+    data_test = load_data_celeba(flag='test')
+    shape = [64,64,3]
+    if not args.put_data_on_disk:
+        args.put_data_on_disk = './'
 
-data_train = preprocess(data_train)
+if args.put_data_on_disk:
+    np.save(args.put_data_on_disk + args.dataset + '_data_train.npy', data_train)
+    data_train = args.put_data_on_disk + args.dataset + '_data_train.npy'
+else:
+    data_train = preprocess(data_train)
 
 if args.evaluateFID:
     FID = []
+    if args.put_data_on_disk:
+        np.save(args.put_data_on_disk + args.dataset + '_data_test.npy', data_test)
+        data_test = args.put_data_on_disk + args.dataset + '_data_test.npy'
 else:
     del data_test
 
-nsample_wT = len(data_train) 
-nsample = nsample_wT + nsample_spline
+if args.dataset in ['mnist', 'fmnist', 'cifar10']:
+    nsample_wT = len(data_train) 
+    nsample_spline = 5*len(data_train)
+    nsample = nsample_wT + nsample_spline
+elif args.dataset == 'celeba':
+    nsample_wT = 40000 
+    nsample_spline = 60000 
+    nsample = 200000 
 
 batchsize = 1000 #Avoid running out of memory. Do not affect performance
 verbose = True
-update_iteration = 200
+update_iteration = 100
 ndim = shape[0]*shape[1]*shape[2]
 
 t_total = time.time()
@@ -146,13 +209,38 @@ t_total = time.time()
 model = SIT(ndim=ndim).requires_grad_(False)
 
 sample = torch.randn(nsample, ndim)
+if args.put_data_on_disk:
+    sample_address = args.put_data_on_disk + args.dataset + '_sample_' + str(int(time.time())) + '.npy'
+    np.save(sample_address, sample)
+    sample = sample_address 
+
 if args.evaluateFID:
     sample_test = torch.randn(10000, ndim)
+    if args.put_data_on_disk:
+        sample_test_address = args.put_data_on_disk + args.dataset + '_sample_test_' + str(int(time.time())) + '.npy'
+        np.save(sample_test_address, sample_test)
+        sample_test = sample_test_address
 else:
     sample_test = None
 
+if args.put_data_on_disk:
+    args.put_data_on_disk = True
+
 if not args.nohierarchy:
-    if args.dataset == 'cifar10':
+    if args.dataset == 'celeba':
+        patch_size = [[64,64,3], 
+                      [32,32,3],
+                      [16,16,3],
+                      [8,8,3],
+                      [7,7,3],
+                      [6,6,3],
+                      [5,5,3],
+                      [4,4,3],
+                      [3,3,3],
+                      [2,2,3]]
+        K_factor = 2 #n_component = K_factor * patch_size[0]
+        Niter = 200 #number of iterations for each patch_size[0]
+    elif args.dataset == 'cifar10':
         patch_size = [[32,32,3], 
                       [16,16,3],
                       [8,8,3],
@@ -180,11 +268,12 @@ if not args.nohierarchy:
         n_component = K_factor * patch[0]
         for _ in range(Niter):
             if patch[0] == shape[0]:
-                model, sample, sample_test = add_one_layer_inverse(model, data_train, sample, n_component, nsample_wT, nsample_spline, layer_type='regular', batchsize=batchsize, sample_test=sample_test)
+                model, sample, sample_test = add_one_layer_inverse(model, data_train, sample, n_component, nsample_wT, nsample_spline, layer_type='regular', 
+                                                                   batchsize=batchsize, sample_test=sample_test, put_data_on_disk=args.put_data_on_disk)
             else:
                 shift = torch.randint(32, (2,)).tolist()
-                model, sample, sample_test = add_one_layer_inverse(model, data_train, sample, n_component, nsample_wT, nsample_spline, layer_type='patch',
-                                                                   shape=shape, kernel=patch, shift=shift, batchsize=batchsize, sample_test=sample_test)
+                model, sample, sample_test = add_one_layer_inverse(model, data_train, sample, n_component, nsample_wT, nsample_spline, layer_type='patch', shape=shape, 
+                                                                   kernel=patch, shift=shift, batchsize=batchsize, sample_test=sample_test, put_data_on_disk=args.put_data_on_disk)
             if len(model.layer) % update_iteration == 0:
                 print()
                 print('Finished %d iterations' % len(model.layer), 'Total Time:', time.time()-t_total)
@@ -205,7 +294,8 @@ else:
         Niter = 800
     
     for _ in range(Niter):
-        model, sample, sample_test = add_one_layer_inverse(model, data_train, sample, n_component, nsample_wT, nsample_spline, layer_type='regular', batchsize=batchsize, sample_test=sample_test)
+        model, sample, sample_test = add_one_layer_inverse(model, data_train, sample, n_component, nsample_wT, nsample_spline, layer_type='regular', 
+                                                           batchsize=batchsize, sample_test=sample_test, put_data_on_disk=args.put_data_on_disk)
         if len(model.layer) % update_iteration == 0:
             print()
             print('Finished %d iterations' % len(model.layer), 'Total Time:', time.time()-t_total)
