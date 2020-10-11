@@ -135,7 +135,7 @@ else:
     
     for _ in range(Niter):
         model, sample, sample_test = add_one_layer_inverse(model, data_train, sample, n_component, nsample_wT, nsample_spline, layer_type='regular', batchsize=batchsize, sample_test=sample_test)
-         if len(model.layer) % update_iteration == 0:
+        if len(model.layer) % update_iteration == 0:
             print()
             print('Finished %d iterations' % len(model.layer), 'Total Time:', time.time()-t_total)
             print()
