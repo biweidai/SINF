@@ -3,12 +3,84 @@ from load_data import *
 import argparse
 from fid_score import evaluate_fid_score
 
+def preprocess(data):
+    data = torch.tensor(data).float().reshape(len(data), -1)
+    data = (data + torch.rand_like(data)) / 128. - 1
+    return data
+
 def toimage(sample, shape):
     sample = (sample+1)*128
-    sample = sample.cpu().numpy().astype(int).reshape(len(sample), *shape)
     sample[sample<0] = 0
     sample[sample>255] = 255
+    sample = sample.cpu().numpy().astype('uint8').reshape(len(sample), *shape)
     return sample
+
+
+def add_one_layer_inverse(model, data, sample, n_component, nsample_wT, nsample_spline, layer_type='regular', shape=None, kernel=None, shift=None, interp_nbin=400, MSWD_p=2, MSWD_max_iter=200, edge_bins=10, derivclip=1, extrapolate='regression', alpha=(0., 0.), noise_threshold=0, KDE=False, bw_factor_data=1, bw_factor_sample=1, batchsize=None, verbose=True, device=torch.device('cuda'), sample_test=None):
+
+    assert layer_type in ['regular', 'patch']
+    if layer_type == 'patch':
+        assert shape is not None
+        assert kernel is not None
+        assert shift is not None
+ 
+    assert nsample_wT <= len(data)
+    assert len(sample) >= nsample_wT 
+    assert len(sample) >= nsample_spline 
+
+    if verbose:
+        tstart = start_timing()
+
+    sample_device = sample.device
+    sample = sample[torch.randperm(sample.shape[0])]
+    if layer_type == 'regular':
+        layer = SlicedTransport(ndim=model.ndim, n_component=n_component, interp_nbin=interp_nbin).requires_grad_(False).to(device)
+    elif layer_type == 'patch':
+        layer = PatchSlicedTransport(shape=shape, kernel=kernel, shift=shift, n_component=n_component, interp_nbin=interp_nbin).requires_grad_(False).to(device)
+
+    if len(data) == nsample_wT:
+        data1 = data.to(device)
+    else:
+        data = data[torch.randperm(data.shape[0])]
+        data1 = data[:nsample_wT].to(device)
+    sample1 = sample[:nsample_wT].to(device)
+
+    layer.fit_wT(data1, sample=sample1, MSWD_p=MSWD_p, MSWD_max_iter=MSWD_max_iter, verbose=verbose)
+
+    if len(data) <= nsample_spline:
+        data1 = data.to(device)
+    else:
+        data1 = data[-nsample_spline:].to(device)
+    sample1 = sample[-nsample_spline:].to(device)
+    SWD = layer.fit_spline_inverse(data1, sample1, edge_bins=edge_bins, derivclip=derivclip, extrapolate=extrapolate, alpha=alpha, noise_threshold=noise_threshold,
+                                   MSWD_p=MSWD_p, KDE=KDE, bw_factor_data=bw_factor_data, bw_factor_sample=bw_factor_sample, batchsize=batchsize, verbose=verbose)
+    del data1, sample1
+
+    if (SWD>noise_threshold).any():
+
+        if batchsize is None:
+            sample = layer.inverse(sample.to(device))[0].to(sample_device)
+            sample_test = layer.inverse(sample_test.to(device))[0].to(sample_device)
+        else:
+            j = 0
+            while j * batchsize < len(sample):
+                sample[j*batchsize:(j+1)*batchsize] = layer.inverse(sample[j*batchsize:(j+1)*batchsize].to(device))[0].to(sample_device)
+                j += 1
+            if sample_test is not None:
+                j = 0
+                while j * batchsize < len(sample_test):
+                    sample_test[j*batchsize:(j+1)*batchsize] = layer.inverse(sample_test[j*batchsize:(j+1)*batchsize].to(device))[0].to(sample_device)
+                    j += 1
+
+        model.add_layer(layer.to(sample_device), position=0)
+    if verbose:
+        t = end_timing(tstart)
+        print ('Nlayer:', len(model.layer), 'Time:', t, layer_type)
+        print ()
+
+    return model, sample, sample_test
+
+
 
 parser = argparse.ArgumentParser()
 
@@ -53,8 +125,7 @@ elif args.dataset == 'cifar10':
     shape = [32,32,3]
     nsample_spline = 5*len(data_train)
 
-data_train = torch.tensor(data_train).float().reshape(len(data_train), -1)
-data_train = (data_train + torch.rand_like(data_train)) / 128. - 1
+data_train = preprocess(data_train)
 
 if args.evaluateFID:
     FID = []
@@ -121,7 +192,7 @@ if not args.nohierarchy:
                 torch.save(model, args.save + 'SIG_%s_seed%d_hierarchy' % (args.dataset, args.seed))
                 if args.evaluateFID:
                     sample_test1 = toimage(sample_test, shape)
-                    FID.append(evaluate_fid_score(fake_images=sample_test1.astype('float'), real_images=data_test.astype('float'), norm=True))
+                    FID.append(evaluate_fid_score(sample_test1.astype(np.float32), data_test.astype(np.float32)))
                     print('Current FID score:', FID[-1])
                     del sample_test1
     
@@ -142,7 +213,7 @@ else:
             torch.save(model, args.save + 'SIG_%s_seed%d' % (args.dataset, args.seed))
             if args.evaluateFID:
                 sample_test1 = toimage(sample_test, shape)
-                FID.append(evaluate_fid_score(fake_images=sample_test1.astype('float'), real_images=data_test.astype('float'), norm=True))
+                FID.append(evaluate_fid_score(sample_test1.astype(np.float32), data_test.astype(np.float32)))
                 print('Current FID score:', FID[-1])
                 del sample_test1
 
