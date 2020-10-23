@@ -174,9 +174,13 @@ def evaluate_fid_score(images1, images2, batch_size=50):
     if images2.shape[-1] == 1:
         images2 = np.concatenate([images2, images2, images2], axis=-1)
 
+    if np.max(images1) > 1 or np.min(images1) < 0 or np.max(images2) > 1 or np.min(images2) < 0:
+        import warnings
+        warnings.warn('FID score: the values of images should be in range [0,1].')
+    
     images1 = np.transpose(images1, axes=(0,3,1,2))
     images2 = np.transpose(images2, axes=(0,3,1,2))
-
+    
     m1, s1 = calculate_activation_statistics(images1, model, batch_size, 2048, device)
     m2, s2 = calculate_activation_statistics(images2, model, batch_size, 2048, device)
     fid_value = calculate_frechet_distance(m1, s1, m2, s2)
