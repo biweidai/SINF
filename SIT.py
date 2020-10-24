@@ -5,6 +5,7 @@ import time
 import math
 from SlicedWasserstein import *
 from RQspline import *
+from discriminative import train_discriminative
 
 
 
@@ -718,6 +719,37 @@ class ConditionalSlicedTransport_discrete(nn.Module):
                 print ('Fit spline:', 'Time:', t, 'Wasserstein Distance:', SWD)
 
             return SWD
+
+
+
+    def fit(self, data, label, logj, margin=10, lr=(1e-4, 1e-4), maxepoch=100, batchsize=None, verbose=True):
+
+        #data: (nclass, ndata, ndim)
+        #logp: (nclass, ndata)
+
+        if verbose:
+            tstart = start_timing()
+
+        #initialize wT and RQspline
+        self.fit_wT(data[label, torch.arange(data.shape[1])], verbose=False).fit_spline(data[label, torch.arange(data.shape[1])], label, edge_bins=0, derivclip=1, alpha=(0,0), KDE=True, bw_factor=1, verbose=False)
+
+        self.requires_grad_(True)
+
+        #optimizers
+        optimizer_ortho = Stiefel_SGD([self.wT], lr=lr[0], momentum=0.9)
+        optimizer_spline = optim.Adam(self.transform1D.parameters(), lr=lr[1])
+
+        #train
+        train_losses = train_discriminative(self, optimizer_ortho, optimizer_spline, data, label, logj, maxepoch=maxepoch, batchsize=batchsize, nclass=self.n_class, margin=margin)
+
+        self.requires_grad_(False)
+
+        if verbose:
+            t = end_timing(tstart)
+            print ('Train loss:', train_losses, 'Fit time:', t)
+
+        return train_losses
+
 
 
     def transform(self, data, label, mode='forward', d_dz=None, param=None):
