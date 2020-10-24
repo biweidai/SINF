@@ -564,7 +564,7 @@ class PatchSlicedTransport(nn.Module):
 
             wT = self.construct_wT()
 
-            SWD = SlicedWasserstein_direction(data, wT, second=sample, p=MSWD_p)
+            SWD = SlicedWasserstein_direction(data, wT, second=sample, p=MSWD_p, batchsize=16)
             data0 = data @ wT
             sample0 = sample @ wT
 
