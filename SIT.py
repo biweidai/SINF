@@ -565,7 +565,7 @@ class PatchSlicedTransport(nn.Module):
 
             wT = self.construct_wT()
 
-            SWD = SlicedWasserstein_direction(data, wT, second=sample, p=MSWD_p)
+            SWD = SlicedWasserstein_direction(data, wT, second=sample, p=MSWD_p, batchsize=16)
             data0 = data @ wT
             sample0 = sample @ wT
 
@@ -722,7 +722,7 @@ class ConditionalSlicedTransport_discrete(nn.Module):
 
 
 
-    def fit(self, data, label, logj, margin=10, lr=(1e-4, 1e-4), maxepoch=100, batchsize=None, verbose=True):
+    def fit(self, data, label, logj, margin=10, lr=(1e-4, 1e-4), maxepoch=100, batchsize=None, data_validate=None, label_validate=None, logj_validate=None, verbose=True):
 
         #data: (nclass, ndata, ndim)
         #logp: (nclass, ndata)
@@ -740,7 +740,7 @@ class ConditionalSlicedTransport_discrete(nn.Module):
         optimizer_spline = optim.Adam(self.transform1D.parameters(), lr=lr[1])
 
         #train
-        train_losses = train_discriminative(self, optimizer_ortho, optimizer_spline, data, label, logj, maxepoch=maxepoch, batchsize=batchsize, nclass=self.n_class, margin=margin)
+        train_losses = train_discriminative(self, optimizer_ortho, optimizer_spline, data, label, logj, maxepoch=maxepoch, batchsize=batchsize, nclass=self.n_class, margin=margin, data_validate=data_validate, label_validate=label_validate, logj_validate=logj_validate)
 
         self.requires_grad_(False)
 
