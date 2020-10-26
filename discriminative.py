@@ -1,5 +1,6 @@
 import torch
 from RQspline import RQspline, estimate_knots_gaussian
+from SlicedWasserstein import Stiefel_SGD
 import time
 import copy
 
@@ -126,7 +127,7 @@ def train_discriminative(layer, optimizer_ortho, optimizer_spline, data, label, 
     print(batchsize)
 
     wait = 0
-    maxwait = 2
+    maxwait = 1
     for epoch in range(maxepoch):    
         t = time.time()
         if batchsize is None:

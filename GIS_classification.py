@@ -99,12 +99,14 @@ for i in range(10):
         best_validate_accuracy = accuracy_validate[-1]
 
 
+'''
 #discriminative loss
-n_component = 8
-batchsize = 125 
-interp_nbin = 20
-margin = 10
+n_component = 4 
+batchsize = 500 
+interp_nbin = 10
+margin = 20 
 maxepoch = 100
+print(n_component, batchsize, interp_nbin, margin, maxepoch)
 while True:
     t = time.time()
 
@@ -137,3 +139,48 @@ while True:
     if accuracy_validate[-1] > best_validate_accuracy:
         best_Nlayer = len(model.layer)
         best_validate_accuracy = accuracy_validate[-1]
+'''
+
+#discriminative loss
+n_component = 4 
+batchsize = 125 
+interp_nbin = 20
+margin = 20 
+maxepoch = 100
+shape = [28,28,1] 
+kernel = [4,4,1] 
+print(n_component, batchsize, interp_nbin, margin, maxepoch, kernel)
+while True:
+    t = time.time()
+
+    shift = torch.randint(shape[0], (2,)).tolist()
+    layer = ConditionalPatchSlicedTransport_discrete(n_class=n_class, shape=shape, kernel=kernel, shift=shift, n_component=n_component, interp_nbin=interp_nbin).requires_grad_(False).cuda()
+
+    loss = layer.fit(data=data_train, label=label_train, logj=logj_train, margin=margin, lr=(2e-3, 2e-3), maxepoch=maxepoch, batchsize=batchsize, data_validate=data_validate, label_validate=label_validate, logj_validate=logj_validate, verbose=verbose)
+
+    for label in range(n_class):
+        data_train[label], logj_train1 = layer(data_train[label], torch.ones(data_train.shape[1], dtype=torch.int, device=data_train.device)*label)
+        logj_train[label] = logj_train[label] + logj_train1
+
+        data_validate[label], logj_validate1 = layer(data_validate[label], torch.ones(data_validate.shape[1], dtype=torch.int, device=data_validate.device)*label)
+        logj_validate[label] = logj_validate[label] + logj_validate1
+
+        data_test[label], logj_test1 = layer(data_test[label], torch.ones(data_test.shape[1], dtype=torch.int, device=data_test.device)*label)
+        logj_test[label] = logj_test[label] + logj_test1
+
+    model.add_layer(layer)
+
+    predict_label_train = torch.argmax(logj_train-torch.sum(data_train**2, dim=2)/2., dim=0) 
+    accuracy_train.append(torch.sum(predict_label_train==label_train).item() / len(label_train))
+
+    predict_label_validate = torch.argmax(logj_validate-torch.sum(data_validate**2, dim=2)/2., dim=0) 
+    accuracy_validate.append(torch.sum(predict_label_validate==label_validate).item() / len(label_validate))
+
+    predict_label_test = torch.argmax(logj_test-torch.sum(data_test**2, dim=2)/2., dim=0) 
+    accuracy_test.append(torch.sum(predict_label_test==label_test).item() / len(label_test))
+    print(len(model.layer), 'accuracy:', accuracy_train[-1], accuracy_validate[-1], accuracy_test[-1], 'Time:', time.time()-t)
+
+    if accuracy_validate[-1] > best_validate_accuracy:
+        best_Nlayer = len(model.layer)
+        best_validate_accuracy = accuracy_validate[-1]
+
