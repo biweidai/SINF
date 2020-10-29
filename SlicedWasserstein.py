@@ -230,16 +230,16 @@ def SlicedWasserstein_direction(data, directions=None, second='gaussian', p=2, b
         data0 = data @ directions
     if second is not 'gaussian':
         assert data.shape[1] == second.shape[1]
-        if directions is None:
-            second0 = second
-        else:
-            second0 = second @ directions
 
-        if data0.shape[0] < second.shape[0]:
-            second0 = second0[torch.randperm(second0.shape[0])][:data0.shape[0]]
-        elif data0.shape[0] > second0.shape[0]:
-            data0 = data0[torch.randperm(data0.shape[0])][:second0.shape[0]]
-        
+        second0 = second
+        if data.shape[0] < second.shape[0]:
+            second0 = second[torch.randperm(second.shape[0])[:data.shape[0]]]
+        elif data.shape[0] > second.shape[0]:
+            data0 = data[torch.randperm(data.shape[0])[:second.shape[0]]]
+
+        if directions is not None:
+            second0 = second0 @ directions
+
         if batchsize is None:
             SWD = SlicedWassersteinDistance(data0.T, second0.T, None, p, perdim=False)
         else:
@@ -317,18 +317,34 @@ class Stiefel_SGD(optim.Optimizer):
                     G = p.grad.data.double()
 
                 X = p.data.double()
-                n_dim = p.data.shape[0]
-                n_component = p.data.shape[1]
                 dtype = p.data.dtype
+                if p.data.ndim == 2: 
+                    n_dim = p.data.shape[0]
+                    n_component = p.data.shape[1]
 
-                if 2*n_component < n_dim:
-                    U = torch.cat((G, X), dim=1)
-                    VT = torch.cat((X.T, -G.T), dim=0)
-                    #p.data.add_(-group['lr'], (U@torch.pinverse(torch.eye(2*n_component, dtype=torch.double, device=X.device)+group['lr']/2.*VT@U)@VT@X).type(dtype))
-                    p.data = (X - group['lr'] * U@torch.pinverse(torch.eye(2*n_component, dtype=torch.double, device=X.device)+group['lr']/2.*VT@U)@VT@X).type(dtype)
+                    if 2*n_component < n_dim:
+                        U = torch.cat((G, X), dim=1)
+                        VT = torch.cat((X.T, -G.T), dim=0)
+                        #p.data.add_(-group['lr'], (U@torch.pinverse(torch.eye(2*n_component, dtype=torch.double, device=X.device)+group['lr']/2.*VT@U)@VT@X).type(dtype))
+                        p.data = (X - group['lr'] * U@torch.pinverse(torch.eye(2*n_component, dtype=torch.double, device=X.device)+group['lr']/2.*VT@U)@VT@X).type(dtype)
+                    else:
+                        A = G@X.T - X@G.T
+                        p.data = (torch.pinverse(torch.eye(n_dim, dtype=torch.double, device=X.device)+group['lr']/2*A) @ (torch.eye(n_dim, dtype=torch.double, device=X.device)-group['lr']/2*A) @ X).type(dtype)
+                elif p.data.ndim == 3:
+                    n_dim = p.data.shape[1]
+                    n_component = p.data.shape[2]
+
+                    if 2*n_component < n_dim:
+                        for i in range(len(p.data)):
+                            U = torch.cat((G[i], X[i]), dim=1)
+                            VT = torch.cat((X[i].T, -G[i].T), dim=0)
+                            p.data[i] = (X[i] - group['lr'] * U@torch.pinverse(torch.eye(2*n_component, dtype=torch.double, device=X.device)+group['lr']/2.*VT@U)@VT@X[i]).type(dtype)
+                    else:
+                        for i in range(len(p.data)):
+                            A = G[i]@X[i].T - X[i]@G[i].T
+                            p.data[i] = (torch.pinverse(torch.eye(n_dim, dtype=torch.double, device=X.device)+group['lr']/2*A) @ (torch.eye(n_dim, dtype=torch.double, device=X.device)-group['lr']/2*A) @ X[i]).type(dtype)
                 else:
-                    A = G@X.T - X@G.T
-                    p.data = (torch.pinverse(torch.eye(n_dim, dtype=torch.double, device=X.device)+group['lr']/2*A) @ (torch.eye(n_dim, dtype=torch.double, device=X.device)-group['lr']/2*A) @ X).type(dtype)
+                    raise ValueError('The dimensionality should be 2 or 3')
 
         return loss
 

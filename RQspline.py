@@ -225,7 +225,7 @@ class RQspline(nn.Module):
         # x: (ndata, ndim) 2d array
         xx, yy, delta = self._prepare() #(ndim, nknot)
 
-        index = torch.searchsorted(xx, x.T.contiguous()).T
+        index = torch.searchsorted(xx.detach(), x.T.contiguous().detach()).T
         y = torch.zeros_like(x)
         logderiv = torch.zeros_like(x)
 
@@ -257,7 +257,7 @@ class RQspline(nn.Module):
     def inverse(self, y):
         xx, yy, delta = self._prepare()
 
-        index = torch.searchsorted(yy, y.T.contiguous()).T
+        index = torch.searchsorted(yy.detach(), y.T.contiguous().detach()).T
         x = torch.zeros_like(y)
         logderiv = torch.zeros_like(y)
 

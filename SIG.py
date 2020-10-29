@@ -158,6 +158,8 @@ parser.add_argument('--seed', type=int, default=738,
 parser.add_argument('--save', type=str, default='./',
                     help='Where to save the trained model.')
 
+parser.add_argument('--restore', type=str, help='Path to model to restore.')
+
 parser.add_argument('--put_data_on_disk', type=str, 
                     help='Temporary address to save the data and samples. Only use this when the dataset is large and cannot load in the memory (e.g. CelebA).')
 
@@ -178,18 +180,31 @@ device = torch.device('cuda')
 if args.dataset == 'mnist':
     data_train, data_test = load_data_mnist()
     shape = [28,28,1]
+    batchsize = 10000 #Avoid running out of memory. Do not affect performance
 elif args.dataset == 'fmnist':
     data_train, data_test = load_data_fmnist()
     shape = [28,28,1]
+    batchsize = 10000 
 elif args.dataset == 'cifar10':
     data_train, data_test = load_data_cifar10()
     shape = [32,32,3]
+    batchsize = 5000
 elif args.dataset == 'celeba':
     data_train = load_data_celeba(flag='training')
     data_test = load_data_celeba(flag='test')
     shape = [64,64,3]
+    batchsize = 5000 
     if not args.put_data_on_disk:
         args.put_data_on_disk = './'
+
+if args.dataset in ['mnist', 'fmnist', 'cifar10']:
+    nsample_wT = len(data_train) 
+    nsample_spline = 5*len(data_train)
+    nsample = nsample_wT + nsample_spline
+elif args.dataset == 'celeba':
+    nsample_wT = 40000 
+    nsample_spline = 60000 
+    nsample = 100000 
 
 if args.put_data_on_disk:
     np.save(args.put_data_on_disk + args.dataset + '_data_train.npy', data_train)
@@ -206,16 +221,6 @@ if args.evaluateFID:
 else:
     del data_test
 
-if args.dataset in ['mnist', 'fmnist', 'cifar10']:
-    nsample_wT = len(data_train) 
-    nsample_spline = 5*len(data_train)
-    nsample = nsample_wT + nsample_spline
-elif args.dataset == 'celeba':
-    nsample_wT = 40000 
-    nsample_spline = 60000 
-    nsample = 100000 
-
-batchsize = 10000 #Avoid running out of memory. Do not affect performance
 verbose = True
 update_iteration = 100
 ndim = shape[0]*shape[1]*shape[2]
@@ -223,10 +228,18 @@ ndim = shape[0]*shape[1]*shape[2]
 t_total = time.time()
 
 #define the model
-model = SIT(ndim=ndim).requires_grad_(False)
-#model = torch.load(args.save + 'SIG_celeba_seed738_hierarchy') 
+if args.restore:
+    model = torch.load(args.restore) 
+    print('Successfully load in the model. Time:', time.time()-t_total)
+else:
+    model = SIT(ndim=ndim).requires_grad_(False)
 
 sample = torch.randn(nsample, ndim)
+if args.restore:
+    t = time.time()
+    sample = transform_batch_model(model, sample, batchsize, start=None, end=0)[0]
+    print ('Transform samples. time:', time.time()-t, 'iteration:', len(model.layer))
+    
 if args.put_data_on_disk:
     jobid = str(int(time.time()))
     sample_address = args.put_data_on_disk + args.dataset + '_sample_' + jobid + '.npy'
@@ -235,25 +248,33 @@ if args.put_data_on_disk:
 
 if args.evaluateFID:
     sample_test = torch.randn(10000, ndim)
+    if args.restore:
+        t = time.time()
+        sample_test = transform_batch_model(model, sample_test, batchsize, start=None, end=0)[0]
+        sample_test1 = toimage(sample_test, shape)
     if args.put_data_on_disk:
+        FID.append(evaluate_fid_score(sample_test1.astype(np.float32)/255., np.load(data_test)[:10000].astype(np.float32)/255.))
         sample_test_address = args.put_data_on_disk + args.dataset + '_sample_test_' + jobid + '.npy'
         np.save(sample_test_address, sample_test)
         sample_test = sample_test_address
+    else:
+        FID.append(evaluate_fid_score(sample_test1.astype(np.float32)/255., data_test.astype(np.float32)/255.))
+    del sample_test1
+    print ('Transform test samples. time:', time.time()-t, 'iteration:', len(model.layer), 'Current FID score:', FID[-1])
 else:
     sample_test = None
 
-#sample = args.put_data_on_disk + args.dataset + '_sample_1602694511.npy'
-#sample_test = args.put_data_on_disk + args.dataset + '_sample_test_1602694511.npy'
+model = model.cpu()
 
 if args.put_data_on_disk:
     args.put_data_on_disk = True
 
 if args.mp:
     pool = mp.Pool(processes=args.mp)
-
 else:
     pool = None
 
+nlayer = 0 
 if not args.nohierarchy:
     if args.dataset == 'celeba':
         patch_size = [[64,64,3], 
@@ -271,13 +292,15 @@ if not args.nohierarchy:
     elif args.dataset == 'cifar10':
         patch_size = [[32,32,3], 
                       [16,16,3],
+                      [16,16,1],
                       [8,8,3],
                       [7,7,3],
                       [6,6,3],
                       [5,5,3],
                       [4,4,3],
                       [3,3,3],
-                      [2,2,3]]
+                      [2,2,3],
+                      [2,2,1]]
         K_factor = 2 #n_component = K_factor * patch_size[0]
         Niter = 200 #number of iterations for each patch_size[0]
     elif args.dataset in ['mnist', 'fmnist']:
@@ -292,7 +315,6 @@ if not args.nohierarchy:
         K_factor = 2 #n_component = K_factor * patch_size[0]
         Niter = 100 #number of iterations for each patch_size[0]
    
-    nlayer = 0 
     for patch in patch_size:
         n_component = K_factor * patch[0]
         for _ in range(Niter):
@@ -310,7 +332,7 @@ if not args.nohierarchy:
                 print()
                 print('Finished %d iterations' % len(model.layer), 'Total Time:', time.time()-t_total)
                 print()
-                torch.save(model, args.save + 'SIG_%s_seed%d_hierarchy' % (args.dataset, args.seed))
+                torch.save(model, args.save + 'SIG_%s_seed%d_hierarchy6' % (args.dataset, args.seed))
                 if args.evaluateFID:
                     if args.put_data_on_disk:
                         sample_test1 = toimage(torch.tensor(np.load(sample_test)), shape)
@@ -330,6 +352,9 @@ else:
         Niter = 800
     
     for _ in range(Niter):
+        nlayer += 1
+        if nlayer <= len(model.layer):
+            continue
         model, sample, sample_test = add_one_layer_inverse(model, data_train, sample, n_component, nsample_wT, nsample_spline, layer_type='regular', 
                                                            batchsize=batchsize, sample_test=sample_test, put_data_on_disk=args.put_data_on_disk)
         if len(model.layer) % update_iteration == 0:

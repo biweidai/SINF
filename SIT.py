@@ -5,6 +5,7 @@ import time
 import math
 from SlicedWasserstein import *
 from RQspline import *
+from discriminative import train_discriminative
 
 
 
@@ -67,6 +68,32 @@ class SIT(nn.Module):
             return data, logj
         else:
             return data, logj, d_dz
+
+
+    def transform(self, data, start, end, param=None):
+
+        if start is None:
+            return self.inverse(data=data, start=start, end=end, param=param) 
+        elif end is None:
+            return self.forward(data=data, start=start, end=end, param=param) 
+        elif start < 0:
+            start += len(self.layer)
+        elif end < 0:
+            end += len(self.layer)
+        
+        if start < 0:
+            start = 0
+        elif start > len(self.layer):
+            start = len(self.layer)
+        if end < 0:
+            end = 0
+        elif end > len(self.layer):
+            end = len(self.layer)
+
+        if start <= end:
+            return self.forward(data=data, start=start, end=end, param=param) 
+        else:
+            return self.inverse(data=data, start=start, end=end, param=param) 
     
     
     def add_layer(self, layer, position=None):
@@ -462,6 +489,7 @@ class PatchSlicedTransport(nn.Module):
         self.wT = nn.Parameter(wT)
         self.transform1D = RQspline(self.Nkernel*self.n_component, interp_nbin)
 
+
     @staticmethod
     def _fit_wT_patch(data, sample, wT, SWD, dim, index, HWC, kernel, n_component, max_iter):
 
@@ -518,7 +546,7 @@ class PatchSlicedTransport(nn.Module):
             print ('Fit wT:', 'Time:', t, 'Wasserstein Distance:', SWD.tolist())
 
         return self 
-
+    
 
     def construct_wT(self):
 
@@ -738,7 +766,38 @@ class ConditionalSlicedTransport_discrete(nn.Module):
             return SWD
 
 
-    def transform(self, data, label, mode='forward', d_dz=None, param=None):
+
+    def fit(self, data, label, logj, margin=10, lr=(1e-4, 1e-4), maxepoch=100, batchsize=None, L2=0, data_validate=None, label_validate=None, logj_validate=None, verbose=True):
+
+        #data: (nclass, ndata, ndim)
+        #logp: (nclass, ndata)
+
+        if verbose:
+            tstart = start_timing()
+
+        #initialize wT and RQspline
+        self.fit_wT(data[label, torch.arange(data.shape[1])], verbose=False).fit_spline(data[label, torch.arange(data.shape[1])], label, edge_bins=0, derivclip=1, alpha=(0,0), KDE=True, bw_factor=1, verbose=False)
+
+        self.requires_grad_(True)
+
+        #optimizers
+        optimizer_ortho = Stiefel_SGD([self.wT], lr=lr[0], momentum=0.9)
+        optimizer_spline = optim.Adam(self.transform1D.parameters(), lr=lr[1])
+
+        #train
+        train_losses = train_discriminative(self, optimizer_ortho, optimizer_spline, data, label, logj, maxepoch=maxepoch, batchsize=batchsize, nclass=self.n_class, margin=margin, L2=L2, data_validate=data_validate, label_validate=label_validate, logj_validate=logj_validate)
+
+        self.requires_grad_(False)
+
+        if verbose:
+            t = end_timing(tstart)
+            print ('Train loss:', train_losses, 'Fit time:', t)
+
+        return train_losses
+
+
+
+    def transform(self, data, label, mode='forward', d_dz=None):
 
         data0 = data @ self.wT
         remaining = data - data0 @ self.wT.T
@@ -772,6 +831,258 @@ class ConditionalSlicedTransport_discrete(nn.Module):
 
 
     def inverse(self, data, param, d_dz=None):
+        return self.transform(data, param, mode='inverse', d_dz=d_dz)
+
+
+
+class ConditionalPatchSlicedTransport_discrete(nn.Module):
+
+    #1 layer of conditional patch based sliced transport 
+
+    def __init__(self, n_class=10, shape=[28,28,1], kernel=[4,4,1], shift=[0,0], n_component=None, interp_nbin=200):
+
+        assert shift[0] >= 0 and shift[0] < shape[0]
+        assert shift[1] >= 0 and shift[1] < shape[1]
+        assert len(shape) == 3 and len(kernel) == 3 and len(shift) == 2
+        assert (kernel[0] <= shape[0]) and (kernel[1] <= shape[1])
+        if shape[-1] == 1:
+            assert kernel[-1] == 1
+        else:
+            assert (kernel[-1] == 1) or (kernel[-1] == shape[-1])
+
+        super().__init__()
+        self.register_buffer('shape', torch.tensor(shape))
+        self.register_buffer('kernel', torch.tensor(kernel)) 
+        self.register_buffer('shift', torch.tensor(shift))
+        
+        self.n_class = n_class
+        self.ndim_sub = (self.kernel[0]*self.kernel[1]*self.kernel[2]).item()
+
+        if n_component is None:
+            self.n_component = self.ndim_sub 
+        else:
+            self.n_component = n_component
+            assert n_component <= self.ndim_sub
+        self.interp_nbin = interp_nbin
+        
+        self.Nkernel_H = (self.shape[0] // self.kernel[0]).item()
+        self.Nkernel_W = (self.shape[1] // self.kernel[1]).item()
+        self.Nkernel_C = (self.shape[2] // self.kernel[2]).item()
+        self.Nkernel = self.Nkernel_H * self.Nkernel_W * self.Nkernel_C 
+
+        wT = torch.zeros(self.Nkernel, self.ndim_sub, self.n_component)
+        for i in range(self.Nkernel):
+            wi = torch.randn(self.ndim_sub, self.n_component)
+            Q, R = torch.qr(wi)
+            L = torch.sign(torch.diag(R))
+            wT[i] = (Q * L)
+
+        self.wT = nn.Parameter(wT)
+        self.transform1D = nn.ModuleList([RQspline(self.Nkernel*self.n_component, interp_nbin) for i in range(self.n_class)]) 
+
+    
+    def fit_wT(self, data, sample='gaussian', MSWD_p=2, MSWD_max_iter=200, verbose=True):
+
+        #fit the directions to apply 1D transform
+
+        if verbose:
+            tstart = start_timing()
+
+        dim = torch.arange(data.shape[1], device=data.device).reshape(1, *self.shape)
+        dim = Shift(dim, self.shift)[0]
+
+        SWD = torch.zeros(self.Nkernel, self.n_component, device=data.device)
+
+        for h in range(self.Nkernel_H):
+            for w in range(self.Nkernel_W):
+                for c in range(self.Nkernel_C):
+                    if self.Nkernel_C == 1:
+                        dim0 = dim[h*self.kernel[0]:(h+1)*self.kernel[0], w*self.kernel[1]:(w+1)*self.kernel[1], :].reshape(-1)
+                    else:
+                        dim0 = dim[h*self.kernel[0]:(h+1)*self.kernel[0], w*self.kernel[1]:(w+1)*self.kernel[1], c].reshape(-1)
+                    index = h*self.Nkernel_W*self.Nkernel_C + w*self.Nkernel_C + c
+                    data0 = data[:, dim0]
+                    if sample is 'gaussian':
+                        sample0 = 'gaussian'
+                    else:
+                        sample0 = sample[:, dim0]
+                    wT, SWD[index] = maxSWDdirection(data0, sample0, n_component=self.n_component, maxiter=MSWD_max_iter, p=MSWD_p)
+                    del data0, sample0
+                    with torch.no_grad():
+                        SWD[index], indices = torch.sort(SWD[index], descending=True)
+                        wT = wT[:, indices]
+                        self.wT[index] = torch.qr(wT)[0]
+
+        if verbose:
+            t = end_timing(tstart)
+            print ('Fit wT:', 'Time:', t, 'Wasserstein Distance:', SWD.tolist())
+
+        return self 
+
+
+    def construct_wT(self):
+
+        dim = torch.arange(torch.prod(self.shape), device=self.wT.device).reshape(1, *self.shape)
+        dim = Shift(dim, self.shift)[0]
+        Ntransform = self.Nkernel*self.n_component
+        wT = torch.zeros(torch.prod(self.shape), Ntransform, device=self.wT.device)
+
+        for h in range(self.Nkernel_H):
+            for w in range(self.Nkernel_W):
+                for c in range(self.Nkernel_C):
+                    if self.Nkernel_C == 1:
+                        dim0 = dim[h*self.kernel[0]:(h+1)*self.kernel[0], w*self.kernel[1]:(w+1)*self.kernel[1], :].reshape(-1)
+                    else:
+                        dim0 = dim[h*self.kernel[0]:(h+1)*self.kernel[0], w*self.kernel[1]:(w+1)*self.kernel[1], c].reshape(-1)
+                    index = h*self.Nkernel_W*self.Nkernel_C + w*self.Nkernel_C + c
+                    wT[dim0, self.n_component*index:self.n_component*(index+1)] = self.wT[index]
+                
+        return wT
+
+
+    def fit_spline(self, data, label, edge_bins=0, derivclip=None, extrapolate='regression', alpha=(0.9,0.99), noise_threshold=0, MSWD_p=2, KDE=True, bw_factor=1, batchsize=None, verbose=True):
+
+        assert extrapolate in ['endpoint', 'regression']
+        assert self.interp_nbin > 2 * edge_bins
+        assert derivclip is None or derivclip >= 1
+
+        with torch.no_grad():
+            if verbose:
+                tstart = start_timing()
+
+            wT = self.construct_wT()
+            data0 = data @ wT
+
+            SWD = []
+            #build rational quadratic spline transform
+            for binid in range(self.n_class):
+                select = label == binid
+                SWD1 = SlicedWasserstein_direction(data0[select], None, second='gaussian', p=MSWD_p)
+                SWD.append(SWD1.tolist())
+                x, y, deriv = estimate_knots_gaussian(data0[select], interp_nbin=self.interp_nbin, above_noise=(SWD1>noise_threshold), edge_bins=edge_bins, 
+                                                      derivclip=derivclip, extrapolate=extrapolate, alpha=alpha, KDE=KDE, bw_factor=bw_factor, batchsize=batchsize)
+                self.transform1D[binid].set_param(x, y, deriv)
+
+            if verbose:
+                t = end_timing(tstart)
+                print ('Fit spline:', 'Time:', t, 'Wasserstein Distance:', SWD)
+
+            return SWD
+
+
+    def fit_spline_inverse(self, data, sample, data_label, sample_label, edge_bins=4, derivclip=1, extrapolate='regression', alpha=(0,0), noise_threshold=0, MSWD_p=2, KDE=True, bw_factor_data=1, bw_factor_sample=1, batchsize=None, verbose=True):
+
+        #fit the 1D transform \Psi
+        #inverse method
+
+        assert extrapolate in ['endpoint', 'regression']
+        assert self.interp_nbin > 2 * edge_bins
+        assert derivclip is None or derivclip >= 1
+
+        with torch.no_grad():
+            if verbose:
+                tstart = start_timing()
+
+            wT = self.construct_wT()
+            data0 = data @ wT
+            sample0 = sample @ wT
+
+            SWD = []
+
+            #build rational quadratic spline transform
+            for binid in range(self.n_class):
+                select_data = data_label == binid
+                select_sample = sample_label == binid
+                SWD1 = SlicedWasserstein_direction(data0[select_data], None, second=sample0[select_sample], p=MSWD_p)
+                SWD.append(SWD1.tolist())
+
+                x, y, deriv = estimate_knots(data0[select_data], sample0[select_sample], interp_nbin=self.interp_nbin, above_noise=(SWD1>noise_threshold), edge_bins=edge_bins, derivclip=derivclip, 
+                                             extrapolate=extrapolate, alpha=alpha, KDE=KDE, bw_factor_data=bw_factor_data, bw_factor_sample=bw_factor_sample, batchsize=batchsize)
+                self.transform1D[binid].set_param(x, y, deriv)
+
+            if verbose:
+                t = end_timing(tstart)
+                print ('Fit spline:', 'Time:', t, 'Wasserstein Distance:', SWD)
+
+            return SWD
+
+
+    def fit(self, data, label, logj, margin=10, lr=(1e-4, 1e-4), maxepoch=100, batchsize=None, L2=0, alpha=(0,0), data_validate=None, label_validate=None, logj_validate=None, verbose=True):
+
+        #data: (nclass, ndata, ndim)
+        #logp: (nclass, ndata)
+
+        if verbose:
+            tstart = start_timing()
+
+        #initialize wT and RQspline
+        self.fit_wT(data[label, torch.arange(data.shape[1])], verbose=False).fit_spline(data[label, torch.arange(data.shape[1])], label, edge_bins=0, derivclip=1, alpha=(0,0), KDE=True, bw_factor=1, verbose=False)
+
+        self.requires_grad_(True)
+
+        #optimizers
+        optimizer_ortho = Stiefel_SGD([self.wT], lr=lr[0], momentum=0.9)
+        optimizer_spline = optim.Adam(self.transform1D.parameters(), lr=lr[1])
+
+        #train
+        train_losses = train_discriminative(self, optimizer_ortho, optimizer_spline, data, label, logj, maxepoch=maxepoch, batchsize=batchsize, nclass=self.n_class, margin=margin, L2=L2, data_validate=data_validate, label_validate=label_validate, logj_validate=logj_validate)
+
+        self.requires_grad_(False)
+
+        if alpha[0] != 0 or alpha[1] != 0:
+            for i in range(self.n_class):
+                x, y, deriv = self.transform1D[i]._prepare()
+                y[1:-1] = alpha[0] * x[1:-1] + (1-alpha[0]) * y[1:-1]
+                y[0] = alpha[1] * x[0] + (1-alpha[1]) * y[0]
+                y[-1] = alpha[1] * x[-1] + (1-alpha[1]) * y[-1]
+                deriv[1:-1] = alpha[0] + (1-alpha[0]) * deriv[1:-1]
+                deriv[0] = alpha[1] + (1-alpha[1]) * deriv[0]
+                deriv[-1] = alpha[1] + (1-alpha[1]) * deriv[-1]
+                self.transform1D[i].set_param(x, y, deriv)
+
+        if verbose:
+            t = end_timing(tstart)
+            print ('Train loss:', train_losses, 'Fit time:', t)
+
+        return train_losses
+
+
+    def transform(self, data, label, mode='forward', d_dz=None):
+
+        wT = self.construct_wT()
+
+        data0 = data @ wT
+        remaining = data - data0 @ wT.T
+        logj = torch.zeros(len(data), device=data.device)
+        data1 = torch.zeros_like(data0)
+        if mode is 'forward':
+            for binid in range(self.n_class):
+                select = label == binid
+                data1[select], logj1 = self.transform1D[binid](data0[select])
+                logj[select] = torch.sum(logj1, dim=1)
+        elif mode is 'inverse':
+            for binid in range(self.n_class):
+                select = label == binid
+                data1[select], logj1 = self.transform1D[binid].inverse(data0[select])
+                logj[select] = torch.sum(logj1, dim=1)
+            if d_dz is not None:
+                d_dz0 = torch.einsum('ijk,jl->ilk', d_dz, self.wT)
+                remaining_d_dz = d_dz - torch.einsum('ijk,lj->ilk', d_dz0, self.wT)
+                d_dz0 /= torch.exp(logj[:,:,None])
+                d_dz = remaining_d_dz + torch.einsum('ijk,lj->ilk', d_dz0, self.wT)
+        data = remaining + data1 @ wT.T
+
+        if d_dz is None:
+            return data, logj
+        else:
+            return data, logj, d_dz
+    
+
+    def forward(self, data, param=None):
+        return self.transform(data, param, mode='forward')
+
+
+    def inverse(self, data, d_dz=None, param=None):
         return self.transform(data, param, mode='inverse', d_dz=d_dz)
 
 
