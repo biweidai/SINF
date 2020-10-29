@@ -3,6 +3,7 @@ from load_data import *
 import argparse
 import time
 from fid_score import evaluate_fid_score
+import torch.multiprocessing as mp
 
 def preprocess(data):
     data = torch.tensor(data).float().reshape(len(data), -1)
@@ -17,7 +18,7 @@ def toimage(sample, shape):
     return sample
 
 
-def add_one_layer_inverse(model, data, sample, n_component, nsample_wT, nsample_spline, layer_type='regular', shape=None, kernel=None, shift=None, interp_nbin=400, MSWD_p=2, MSWD_max_iter=200, edge_bins=10, derivclip=1, extrapolate='regression', alpha=(0., 0.), noise_threshold=0, KDE=False, bw_factor_data=1, bw_factor_sample=1, batchsize=None, verbose=True, sample_test=None, put_data_on_disk=False):
+def add_one_layer_inverse(model, data, sample, n_component, nsample_wT, nsample_spline, layer_type='regular', shape=None, kernel=None, shift=None, interp_nbin=400, MSWD_p=2, MSWD_max_iter=200, edge_bins=10, derivclip=1, extrapolate='regression', alpha=(0., 0.), noise_threshold=0, KDE=False, bw_factor_data=1, bw_factor_sample=1, batchsize=None, verbose=True, sample_test=None, put_data_on_disk=False, pool=None):
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -64,7 +65,7 @@ def add_one_layer_inverse(model, data, sample, n_component, nsample_wT, nsample_
     elif layer_type == 'patch':
         layer = PatchSlicedTransport(shape=shape, kernel=kernel, shift=shift, n_component=n_component, interp_nbin=interp_nbin).requires_grad_(False).to(device)
 
-    layer.fit_wT(data1, sample=sample1, MSWD_p=MSWD_p, MSWD_max_iter=MSWD_max_iter, verbose=verbose)
+    layer.fit_wT(data1, sample=sample1, MSWD_p=MSWD_p, MSWD_max_iter=MSWD_max_iter, pool=pool, verbose=verbose)
 
     del data1, sample1
 
@@ -148,6 +149,9 @@ parser.add_argument('--dataset', type=str, default='mnist',
 parser.add_argument('--evaluateFID', action='store_true',
                     help='Whether to evaluate FID scores between random samples and test data.')
 
+parser.add_argument('--mp', type=int, default=0,
+                    help='The number of multiprocessing processes. Set it to the number of available GPUs, or 0 if do not enable multiprocessing.')
+
 parser.add_argument('--seed', type=int, default=738,
                     help='Random seed for PyTorch and NumPy.')
 
@@ -222,7 +226,6 @@ t_total = time.time()
 model = SIT(ndim=ndim).requires_grad_(False)
 #model = torch.load(args.save + 'SIG_celeba_seed738_hierarchy') 
 
-
 sample = torch.randn(nsample, ndim)
 if args.put_data_on_disk:
     jobid = str(int(time.time()))
@@ -244,6 +247,12 @@ else:
 
 if args.put_data_on_disk:
     args.put_data_on_disk = True
+
+if args.mp:
+    pool = mp.Pool(processes=args.mp)
+
+else:
+    pool = None
 
 if not args.nohierarchy:
     if args.dataset == 'celeba':
@@ -290,13 +299,13 @@ if not args.nohierarchy:
             nlayer += 1 
             if nlayer <= len(model.layer):
                 continue
-            if patch[0] == shape[0]:
+            if patch[0] == shape[0] and patch[2] == shape[2]:
                 model, sample, sample_test = add_one_layer_inverse(model, data_train, sample, n_component, nsample_wT, nsample_spline, layer_type='regular', 
-                                                                   batchsize=batchsize, sample_test=sample_test, put_data_on_disk=args.put_data_on_disk)
+                                                                   batchsize=batchsize, sample_test=sample_test, put_data_on_disk=args.put_data_on_disk, pool=pool)
             else:
                 shift = torch.randint(shape[0], (2,)).tolist()
-                model, sample, sample_test = add_one_layer_inverse(model, data_train, sample, n_component, nsample_wT, nsample_spline, layer_type='patch', shape=shape, 
-                                                                   kernel=patch, shift=shift, batchsize=batchsize, sample_test=sample_test, put_data_on_disk=args.put_data_on_disk)
+                model, sample, sample_test = add_one_layer_inverse(model, data_train, sample, n_component, nsample_wT, nsample_spline, layer_type='patch', shape=shape, kernel=patch, 
+                                                                   shift=shift, batchsize=batchsize, sample_test=sample_test, put_data_on_disk=args.put_data_on_disk, pool=pool)
             if len(model.layer) % update_iteration == 0:
                 print()
                 print('Finished %d iterations' % len(model.layer), 'Total Time:', time.time()-t_total)
@@ -337,4 +346,8 @@ else:
                     FID.append(evaluate_fid_score(sample_test1.astype(np.float32)/255., data_test.astype(np.float32)/255.))
                 print('Current FID score:', FID[-1])
                 del sample_test1
+
+if pool:
+    pool.close()
+    pool.join()
 

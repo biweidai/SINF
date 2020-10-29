@@ -281,7 +281,7 @@ class SlicedTransport(nn.Module):
         self.transform1D = RQspline(self.n_component, interp_nbin)
 
 
-    def fit_wT(self, data, sample='gaussian', MSWD_p=2, MSWD_max_iter=200, verbose=True):
+    def fit_wT(self, data, sample='gaussian', MSWD_p=2, MSWD_max_iter=200, pool=None, verbose=True):
 
         #fit the directions to apply 1D transform
 
@@ -462,8 +462,31 @@ class PatchSlicedTransport(nn.Module):
         self.wT = nn.Parameter(wT)
         self.transform1D = RQspline(self.Nkernel*self.n_component, interp_nbin)
 
-    
-    def fit_wT(self, data, sample='gaussian', MSWD_p=2, MSWD_max_iter=200, verbose=True):
+    @staticmethod
+    def _fit_wT_patch(data, sample, wT, SWD, dim, index, HWC, kernel, n_component, max_iter):
+
+        H, W, C = HWC
+        h = index // (W*C)
+        w = (index-h*W*C) // C
+        c = index - h*W*C - w*C
+        if C == 1:
+            dim0 = dim[h*kernel[0]:(h+1)*kernel[0], w*kernel[1]:(w+1)*kernel[1], :].reshape(-1)
+        else:
+            dim0 = dim[h*kernel[0]:(h+1)*kernel[0], w*kernel[1]:(w+1)*kernel[1], c].reshape(-1)
+        data0 = data[:, dim0]
+        if sample is 'gaussian':
+            sample0 = 'gaussian'
+        else:
+            sample0 = sample[:, dim0]
+        wT0, SWD0 = maxSWDdirection(data0, sample0, n_component=n_component, maxiter=max_iter)
+        del data0, sample0
+        with torch.no_grad():
+            SWD[index], indices = torch.sort(SWD0, descending=True)
+            wT0 = wT0[:, indices]
+            wT[index] = torch.qr(wT0)[0]
+
+
+    def fit_wT(self, data, sample='gaussian', MSWD_max_iter=200, pool=None, verbose=True):
 
         #fit the directions to apply 1D transform
 
@@ -475,25 +498,20 @@ class PatchSlicedTransport(nn.Module):
 
         SWD = torch.zeros(self.Nkernel, self.n_component, device=data.device)
 
-        for h in range(self.Nkernel_H):
-            for w in range(self.Nkernel_W):
-                for c in range(self.Nkernel_C):
-                    if self.Nkernel_C == 1:
-                        dim0 = dim[h*self.kernel[0]:(h+1)*self.kernel[0], w*self.kernel[1]:(w+1)*self.kernel[1], :].reshape(-1)
-                    else:
-                        dim0 = dim[h*self.kernel[0]:(h+1)*self.kernel[0], w*self.kernel[1]:(w+1)*self.kernel[1], c].reshape(-1)
-                    index = h*self.Nkernel_W*self.Nkernel_C + w*self.Nkernel_C + c
-                    data0 = data[:, dim0]
-                    if sample is 'gaussian':
-                        sample0 = 'gaussian'
-                    else:
-                        sample0 = sample[:, dim0]
-                    wT, SWD[index] = maxSWDdirection(data0, sample0, n_component=self.n_component, maxiter=MSWD_max_iter, p=MSWD_p)
-                    del data0, sample0
-                    with torch.no_grad():
-                        SWD[index], indices = torch.sort(SWD[index], descending=True)
-                        wT = wT[:, indices]
-                        self.wT[index] = torch.qr(wT)[0]
+        HWC = (self.Nkernel_H, self.Nkernel_W, self.Nkernel_C)
+        if pool is not None:
+            self.wT.share_memory_()
+            data.share_memory_()
+            SWD.share_memory_()
+            sample.share_memory_()
+            dim.share_memory_()
+
+            param = [(data, sample, self.wT, SWD, dim, index, HWC, self.kernel, self.n_component, MSWD_max_iter) for index in range(self.Nkernel)]
+            pool.starmap(self._fit_wT_patch, param)
+
+        else:
+            for index in range(self.Nkernel):
+                self._fit_wT_patch(data, sample, self.wT, SWD, dim, index, HWC, self.kernel, self.n_component, MSWD_max_iter)
 
         if verbose:
             t = end_timing(tstart)

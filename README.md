@@ -31,9 +31,9 @@ SIG achieves the following performance on :
 
 ### FID score
 
-|       MNIST       |      Fashion      |      CIFAR10      |  CelebA (SIG+AE)  |
+|       MNIST       |      Fashion      |      CIFAR10      |       CelebA      |
 | ----------------- | ----------------- | ----------------- | ----------------- |
-|        4.6        |       13.6        |       71.6        |       48.1        |
+|        4.6        |       13.6        |       71.6        |       40.1        |
 
 ### OoD detection (AUROC on models trained on FashionMNIST)
 
