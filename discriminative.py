@@ -95,21 +95,24 @@ def delta_logp_discriminative(data, data_falselabel, misclassify, label_true, la
     return w.T
 
 
-def loss_(layer, data, label, logj, nclass=10, margin=10):
+def loss_(layer, data, label, logj, nclass=10, margin=10, L2=0):
     
     logp = torch.zeros_like(logj)
+    reg = 0 
     for i in range(nclass):
         data1, logj1 = layer(data[i], param=torch.ones(data.shape[1], dtype=torch.int, device=data.device)*i)
         logp[i] = logj[i] + logj1 - torch.sum(data1**2, dim=1)/2.
+        x, y, deriv = layer.transform1D[i]._prepare()
+        reg += L2 * torch.sum((y-x)**2 + (deriv-1)**2)
 
     logp_true = logp[label, torch.arange(logp.shape[1], device=logp.device)]
     delta_logp = logp_true - logp - margin
     delta_logp[delta_logp>0] = 0
 
-    return -torch.mean(delta_logp) - margin/nclass
+    return -torch.mean(delta_logp) - margin/nclass + reg
 
 
-def train_discriminative(layer, optimizer_ortho, optimizer_spline, data, label, logj, maxepoch, batchsize, nclass=10, margin=10, quiet=False, data_validate=None, label_validate=None, logj_validate=None):
+def train_discriminative(layer, optimizer_ortho, optimizer_spline, data, label, logj, maxepoch, batchsize, nclass=10, margin=10, L2=0, quiet=False, data_validate=None, label_validate=None, logj_validate=None):
 
     with torch.no_grad():
         train_losses = [loss_(layer, data, label, logj, nclass, margin).item()]
@@ -124,14 +127,13 @@ def train_discriminative(layer, optimizer_ortho, optimizer_spline, data, label, 
             print(f'Epoch 0, Train loss {train_losses[-1]:.4f}')
         else:
             print(f'Epoch 0, Train loss {train_losses[-1]:.4f}, Validate loss {validate_losses[-1]:.4f}')
-    print(batchsize)
 
     wait = 0
     maxwait = 1
     for epoch in range(maxepoch):    
         t = time.time()
         if batchsize is None:
-            loss = loss_(layer, data, label, logj, nclass, margin)
+            loss = loss_(layer, data, label, logj, nclass, margin, L2)
             optimizer_ortho.zero_grad()
             optimizer_spline.zero_grad()
             loss.backward()
@@ -148,7 +150,7 @@ def train_discriminative(layer, optimizer_ortho, optimizer_spline, data, label, 
             start = i*batchsize
             end = (i+1)*batchsize
             while end <= data.shape[1]:
-                loss = loss_(layer, data[:,start:end], label[start:end], logj[:,start:end], nclass, margin)
+                loss = loss_(layer, data[:,start:end], label[start:end], logj[:,start:end], nclass, margin, L2)
                 optimizer_ortho.zero_grad()
                 optimizer_spline.zero_grad()
                 loss.backward()
