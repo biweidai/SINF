@@ -102,8 +102,9 @@ def loss_(layer, data, label, logj, nclass=10, margin=10, L2=0):
     for i in range(nclass):
         data1, logj1 = layer(data[i], param=torch.ones(data.shape[1], dtype=torch.int, device=data.device)*i)
         logp[i] = logj[i] + logj1 - torch.sum(data1**2, dim=1)/2.
-        x, y, deriv = layer.transform1D[i]._prepare()
-        reg += L2 * torch.sum((y-x)**2 + (deriv-1)**2)
+        if L2 != 0:
+            x, y, deriv = layer.transform1D[i]._prepare()
+            reg += L2 * torch.sum((y-x)**2 + (deriv-1)**2)
 
     logp_true = logp[label, torch.arange(logp.shape[1], device=logp.device)]
     delta_logp = logp_true - logp - margin
