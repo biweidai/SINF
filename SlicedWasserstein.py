@@ -232,13 +232,13 @@ def SlicedWasserstein_direction(data, directions=None, second='gaussian', p=2, b
         assert data.shape[1] == second.shape[1]
 
         second0 = second
-        if data.shape[0] < second.shape[0]:
-            second0 = second[torch.randperm(second.shape[0])[:data.shape[0]]]
-        elif data.shape[0] > second.shape[0]:
-            data0 = data[torch.randperm(data.shape[0])[:second.shape[0]]]
-
         if directions is not None:
             second0 = second0 @ directions
+
+        if data0.shape[0] < second0.shape[0]:
+            second0 = second0[torch.randperm(second0.shape[0])[:data0.shape[0]]]
+        elif data0.shape[0] > second0.shape[0]:
+            data0 = data0[torch.randperm(data0.shape[0])[:second0.shape[0]]]
 
         if batchsize is None:
             SWD = SlicedWassersteinDistance(data0.T, second0.T, None, p, perdim=False)

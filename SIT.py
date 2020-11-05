@@ -6,7 +6,7 @@ import math
 from SlicedWasserstein import *
 from RQspline import *
 from discriminative import train_discriminative
-
+import torch.multiprocessing as mp
 
 
 class SIT(nn.Module):
@@ -493,25 +493,37 @@ class PatchSlicedTransport(nn.Module):
     @staticmethod
     def _fit_wT_patch(data, sample, wT, SWD, dim, index, HWC, kernel, n_component, max_iter):
 
+        if torch.cuda.is_available():
+            gpu = index % torch.cuda.device_count()
+            device = torch.device('cuda:%d'%gpu)
+            device0 = torch.device('cuda:0')
+        else:
+            device = torch.device('cpu')
+            device0 = torch.device('cpu')
         H, W, C = HWC
         h = index // (W*C)
         w = (index-h*W*C) // C
         c = index - h*W*C - w*C
         if C == 1:
-            dim0 = dim[h*kernel[0]:(h+1)*kernel[0], w*kernel[1]:(w+1)*kernel[1], :].reshape(-1)
+            dim0 = dim[h*kernel[0]:(h+1)*kernel[0], w*kernel[1]:(w+1)*kernel[1], :].reshape(-1).to(device)
         else:
-            dim0 = dim[h*kernel[0]:(h+1)*kernel[0], w*kernel[1]:(w+1)*kernel[1], c].reshape(-1)
-        data0 = data[:, dim0]
+            dim0 = dim[h*kernel[0]:(h+1)*kernel[0], w*kernel[1]:(w+1)*kernel[1], c].reshape(-1).to(device)
+        data0 = data[:, dim0].to(device)
         if sample is 'gaussian':
             sample0 = 'gaussian'
         else:
-            sample0 = sample[:, dim0]
+            sample0 = sample[:, dim0].to(device)
         wT0, SWD0 = maxSWDdirection(data0, sample0, n_component=n_component, maxiter=max_iter)
-        del data0, sample0
+        del data0, sample0, dim0
         with torch.no_grad():
-            SWD[index], indices = torch.sort(SWD0, descending=True)
+            SWD0, indices = torch.sort(SWD0, descending=True)
+            SWD[index] = SWD0.to(device0)
             wT0 = wT0[:, indices]
-            wT[index] = torch.qr(wT0)[0]
+            wT[index] = torch.qr(wT0)[0].to(device0)
+
+        del SWD0, indices, wT0
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 
     def fit_wT(self, data, sample='gaussian', MSWD_max_iter=200, pool=None, verbose=True):
@@ -528,12 +540,6 @@ class PatchSlicedTransport(nn.Module):
 
         HWC = (self.Nkernel_H, self.Nkernel_W, self.Nkernel_C)
         if pool is not None:
-            self.wT.share_memory_()
-            data.share_memory_()
-            SWD.share_memory_()
-            sample.share_memory_()
-            dim.share_memory_()
-
             param = [(data, sample, self.wT, SWD, dim, index, HWC, self.kernel, self.n_component, MSWD_max_iter) for index in range(self.Nkernel)]
             pool.starmap(self._fit_wT_patch, param)
 
@@ -568,7 +574,7 @@ class PatchSlicedTransport(nn.Module):
         return wT
 
 
-    def fit_spline(self, data, edge_bins=0, derivclip=None, extrapolate='regression', alpha=(0.9,0.99), noise_threshold=0, MSWD_p=2, KDE=True, bw_factor=1, batchsize=None, verbose=True):
+    def fit_spline(self, data, edge_bins=0, derivclip=None, extrapolate='regression', alpha=(0.9,0.99), noise_threshold=0, KDE=True, bw_factor=1, batchsize=None, verbose=True):
 
         assert extrapolate in ['endpoint', 'regression']
         assert self.interp_nbin > 2 * edge_bins
@@ -580,7 +586,7 @@ class PatchSlicedTransport(nn.Module):
 
             wT = self.construct_wT()
 
-            SWD = SlicedWasserstein_direction(data, wT, second='gaussian', p=MSWD_p)
+            SWD = SlicedWasserstein_direction(data, wT, second='gaussian')
             data0 = data @ wT
 
             #build rational quadratic spline transform
@@ -595,7 +601,7 @@ class PatchSlicedTransport(nn.Module):
             return SWD
 
 
-    def fit_spline_inverse(self, data, sample, edge_bins=4, derivclip=1, extrapolate='regression', alpha=(0,0), noise_threshold=0, MSWD_p=2, KDE=True, bw_factor_data=1, bw_factor_sample=1, batchsize=None, verbose=True):
+    def fit_spline_inverse(self, data, sample, edge_bins=4, derivclip=1, extrapolate='regression', alpha=(0,0), noise_threshold=0, KDE=True, bw_factor_data=1, bw_factor_sample=1, batchsize=None, verbose=True):
 
         #fit the 1D transform \Psi
         #inverse method
@@ -610,7 +616,7 @@ class PatchSlicedTransport(nn.Module):
 
             wT = self.construct_wT()
 
-            SWD = SlicedWasserstein_direction(data, wT, second=sample, p=MSWD_p, batchsize=16)
+            SWD = SlicedWasserstein_direction(data, wT, second=sample, batchsize=16)
             data0 = data @ wT
             sample0 = sample @ wT
 
@@ -1087,46 +1093,111 @@ class ConditionalPatchSlicedTransport_discrete(nn.Module):
 
 
 
-def transform_batch_layer(layer, data, batchsize, logj=None, direction='forward', param=None):
+def _transform_batch_layer(layer, data, logj, index, batchsize, start_index=0, end_index=None, direction='forward', param=None):
+
+    if torch.cuda.is_available():
+        gpu = index % torch.cuda.device_count()
+        device = torch.device('cuda:%d'%gpu)
+    else:
+        device = torch.device('cpu')
+    
+    layer = layer.to(device)
+
+    if end_index is None:
+        end_index = len(data)
+
+    i = 0
+    while i * batchsize < end_index-start_index:
+        start_index0 = start_index + i * batchsize 
+        end_index0 = min(start_index + (i+1) * batchsize, end_index) 
+        if direction == 'forward': 
+            if param is None:
+                data1, logj1 = layer.forward(data[start_index0:end_index0].to(device), param=param)
+            else:
+                data1, logj1 = layer.forward(data[start_index0:end_index0].to(device), param=param[start_index0:end_index0].to(device))
+        else: 
+            if param is None:
+                data1, logj1 = layer.inverse(data[start_index0:end_index0].to(device), param=param)
+            else:
+                data1, logj1 = layer.inverse(data[start_index0:end_index0].to(device), param=param[start_index0:end_index0].to(device))
+        data[start_index0:end_index0] = data1.to(data.device)
+        logj[start_index0:end_index0] = logj[start_index0:end_index0] + logj1.to(logj.device)
+        i += 1
+
+    del data1, logj1, layer 
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    return
+
+
+def transform_batch_layer(layer, data, batchsize, logj=None, direction='forward', param=None, pool=None):
     
     assert direction in ['forward', 'inverse']
-    
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
-    layer = layer.to(device)
     
     if logj is None:
         logj = torch.zeros(len(data), device=data.device)
     
-    i = 0
-    while i * batchsize < len(data):
-        if direction == 'forward':
-            data1, logj1 = layer(data[i*batchsize:(i+1)*batchsize].to(device), param=param)
+    if pool is None: 
+        _transform_batch_layer(layer, data, logj, 0, batchsize, direction=direction, param=param) 
+    else:
+        if torch.cuda.is_available():
+            nprocess = torch.cuda.device_count()
         else:
-            data1, logj1 = layer.inverse(data[i*batchsize:(i+1)*batchsize].to(device), param=param)
-        data[i*batchsize:(i+1)*batchsize] = data1.to(data.device)
-        logj[i*batchsize:(i+1)*batchsize] = logj[i*batchsize:(i+1)*batchsize] + logj1.to(data.device)
-        i += 1
+            nprocess = mp.cpu_count()
+        param0 = [(layer, data, logj, i, batchsize, len(data)*i//nprocess, len(data)*(i+1)//nprocess, direction, param) for i in range(nprocess)]
+        pool.starmap(_transform_batch_layer, param0)
     
     return data, logj
 
 
 
-def transform_batch_model(model, data, batchsize, logj=None, start=0, end=None, param=None):
-    
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+def _transform_batch_model(model, data, logj, index, batchsize, start_index=0, end_index=None, start=0, end=None, param=None):
 
+    if torch.cuda.is_available():
+        gpu = index % torch.cuda.device_count()
+        device = torch.device('cuda:%d'%gpu)
+    else:
+        device = torch.device('cpu')
+    
     model = model.to(device)
+
+    if end_index is None:
+        end_index = len(data)
+
+    i = 0
+    while i * batchsize < end_index-start_index:
+        start_index0 = start_index + i * batchsize 
+        end_index0 = min(start_index + (i+1) * batchsize, end_index) 
+        if param is None:
+            data1, logj1 = model.transform(data[start_index0:end_index0].to(device), start=start, end=end, param=param)
+        else:
+            data1, logj1 = model.transform(data[start_index0:end_index0].to(device), start=start, end=end, param=param[start_index0:end_index0].to(device))
+        data[start_index0:end_index0] = data1.to(data.device)
+        logj[start_index0:end_index0] = logj[start_index0:end_index0] + logj1.to(logj.device)
+        i += 1
+
+    del data1, logj1, model 
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    return
+
+
+def transform_batch_model(model, data, batchsize, logj=None, start=0, end=None, param=None, pool=None):
     
     if logj is None:
         logj = torch.zeros(len(data), device=data.device)
     
-    i = 0
-    while i * batchsize < len(data):
-        data1, logj1 = model.transform(data[i*batchsize:(i+1)*batchsize].to(device), start=start, end=end, param=param)
-        data[i*batchsize:(i+1)*batchsize] = data1.to(data.device)
-        logj[i*batchsize:(i+1)*batchsize] = logj[i*batchsize:(i+1)*batchsize] + logj1.to(data.device)
-        i += 1
+    if pool is None: 
+        _transform_batch_model(model, data, logj, 0, batchsize, start=start, end=end, param=param) 
+    else:
+        if torch.cuda.is_available():
+            nprocess = torch.cuda.device_count()
+        else:
+            nprocess = mp.cpu_count()
+        param0 = [(model, data, logj, i, batchsize, len(data)*i//nprocess, len(data)*(i+1)//nprocess, start, end, param) for i in range(nprocess)]
+        pool.starmap(_transform_batch_model, param0)
     
     return data, logj
 
