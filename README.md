@@ -21,7 +21,7 @@ python GIS.py --dataset DATASET --seed SEED --save SAVING_ADDRESS
 
 ## Evaluation
 
-All the evaluation codes of SIG are in SIG.ipynb.
+All the evaluation codes of SIG are in notebook/SIG.ipynb.
 The FID score of SIG samples can also be evaluated on the fly with the "--evaluateFID" argument. 
 
 
@@ -33,7 +33,7 @@ SIG achieves the following performance on :
 
 |       MNIST       |      Fashion      |      CIFAR10      |       CelebA      |
 | ----------------- | ----------------- | ----------------- | ----------------- |
-|        4.6        |       13.6        |       71.6        |       40.1        |
+|        4.5        |       13.6        |       67.0        |       40.1        |
 
 ### OoD detection (AUROC on models trained on FashionMNIST)
 

@@ -19,7 +19,7 @@ def toimage(sample, shape):
     return sample
 
 
-def add_one_layer_inverse(model, data, sample, n_component, nsample_wT, nsample_spline, layer_type='regular', shape=None, kernel=None, shift=None, interp_nbin=400, MSWD_max_iter=200, edge_bins=10, derivclip=1, extrapolate='regression', alpha=(0., 0.), noise_threshold=0, KDE=False, bw_factor_data=1, bw_factor_sample=1, batchsize=None, verbose=True, sample_test=None, put_data_on_disk=False, pool=None):
+def add_one_layer_inverse(model, data, sample, n_component, nsample_wT, nsample, layer_type='regular', shape=None, kernel=None, shift=None, interp_nbin=400, MSWD_max_iter=200, edge_bins=10, derivclip=1, extrapolate='regression', alpha=(0., 0.), noise_threshold=0, KDE=False, bw_factor_data=1, bw_factor_sample=1, batchsize=None, verbose=True, sample_test=None, put_data_on_disk=False, pool=None):
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -42,57 +42,62 @@ def add_one_layer_inverse(model, data, sample, n_component, nsample_wT, nsample_
 
         sample1 = np.load(sample_address)#np.lib.format.open_memmap(sample_address)
         perm_sample = np.random.permutation(len(sample1))
-        #sample1 = torch.as_tensor(sample1[np.sort(perm_sample[:nsample_wT])]).to(device)
-        sample1 = torch.as_tensor(sample1[perm_sample[:nsample_wT]]).to(device)
+        sample1 = torch.as_tensor(sample1[perm_sample[:nsample]])
         
         data1 = np.load(data_address)#np.lib.format.open_memmap(data_address)
         perm_data = np.random.permutation(len(data1))
-        #data1 = preprocess(data1[np.sort(perm_data[:nsample_wT])]).to(device)
-        data1 = preprocess(data1[perm_data[:nsample_wT]]).to(device)
+        data1 = preprocess(data1[perm_data[:nsample]])
 
     else:
         assert isinstance(data, torch.Tensor) and isinstance(sample, torch.Tensor)
-        sample = sample[torch.randperm(sample.shape[0], device=sample.device)]
-        sample1 = sample[:nsample_wT].to(device)
-        
-        data = data[torch.randperm(data.shape[0], device=data.device)]
-        data1 = data[:nsample_wT].to(device)
+        if nsample < len(sample):
+            sample = sample[torch.randperm(sample.shape[0], device=sample.device)]
+            sample1 = sample[:nsample]
+        else:
+            sample1 = sample
+        if nsample < len(data):
+            data = data[torch.randperm(data.shape[0], device=data.device)]
+            data1 = data[:nsample]
+        else:
+            data1 = data
     print(time.time()-t)
-
-    assert len(sample1) == len(data1)
 
     if layer_type == 'regular':
         layer = SlicedTransport(ndim=model.ndim, n_component=n_component, interp_nbin=interp_nbin).requires_grad_(False).to(device)
     elif layer_type == 'patch':
         layer = PatchSlicedTransport(shape=shape, kernel=kernel, shift=shift, n_component=n_component, interp_nbin=interp_nbin).requires_grad_(False).to(device)
 
-    layer.fit_wT(data1, sample=sample1, MSWD_max_iter=MSWD_max_iter, pool=pool, verbose=verbose)
+    layer.fit_wT(data1, sample=sample1, ndata_wT=nsample_wT, MSWD_max_iter=MSWD_max_iter, pool=pool, verbose=verbose)
 
     del data1, sample1
 
     t = time.time()
     if put_data_on_disk:
         sample1 = np.load(sample_address)#np.lib.format.open_memmap(sample_address)
-        #sample1 = torch.tensor(sample1[np.sort(perm_sample[-nsample_spline:])]).to(device)
-        sample1 = torch.as_tensor(sample1[perm_sample[-nsample_spline:]]).to(device)
+        sample1 = torch.as_tensor(sample1[perm_sample[-nsample:]])
         data1 = np.load(data_address)#np.lib.format.open_memmap(data_address)
-        #data1 = preprocess(data1[np.sort(perm_data[-nsample_spline:])]).to(device)
-        data1 = preprocess(data1[perm_data[-nsample_spline:]]).to(device)
+        data1 = preprocess(data1[perm_data[-nsample:]])
     else:
-        sample1 = sample[-nsample_spline:].to(device)
-        data1 = data[-nsample_spline:].to(device)
+        if nsample < len(sample):
+            sample1 = sample[-nsample:]
+        else:
+            sample1 = sample
+        if nsample < len(data):
+            data1 = data[-nsample:]
+        else:
+            data1 = data
     print(time.time()-t)
 
-    SWD = layer.fit_spline_inverse(data1, sample1, edge_bins=edge_bins, derivclip=derivclip, extrapolate=extrapolate, alpha=alpha, noise_threshold=noise_threshold,
-                                   KDE=KDE, bw_factor_data=bw_factor_data, bw_factor_sample=bw_factor_sample, batchsize=batchsize, verbose=verbose)
+    success = layer.fit_spline_inverse(data1, sample1, edge_bins=edge_bins, derivclip=derivclip, extrapolate=extrapolate, alpha=alpha, noise_threshold=noise_threshold,
+                                       KDE=KDE, bw_factor_data=bw_factor_data, bw_factor_sample=bw_factor_sample, batchsize=batchsize, verbose=verbose)
 
     del data1, sample1
     if put_data_on_disk:
         del perm_sample, perm_data
 
     t = time.time()
-    if (SWD>noise_threshold).any():
 
+    if success:
         if put_data_on_disk:
             if batchsize is None:
                 sample = torch.as_tensor(np.load(sample_address))
@@ -201,7 +206,7 @@ if __name__ == "__main__":
     elif args.dataset == 'cifar10':
         data_train, data_test = load_data_cifar10()
         shape = [32,32,3]
-        batchsize = 2000
+        batchsize = 3000
     elif args.dataset == 'celeba':
         data_train = load_data_celeba(flag='training')
         data_test = load_data_celeba(flag='test')
@@ -212,8 +217,7 @@ if __name__ == "__main__":
     
     if args.dataset in ['mnist', 'fmnist', 'cifar10']:
         nsample_wT = len(data_train) 
-        nsample_spline = 5*len(data_train)
-        nsample = nsample_wT + nsample_spline
+        nsample = 6*len(data_train)
     elif args.dataset == 'celeba':
         nsample_wT = 40000 
         nsample_spline = 60000 
@@ -264,6 +268,7 @@ if __name__ == "__main__":
         if args.restore:
             t = time.time()
             sample_test = transform_batch_model(model, sample_test, batchsize, start=None, end=0)[0]
+            model = model.cpu()
             sample_test1 = toimage(sample_test, shape)
             if args.put_data_on_disk:
                 FID.append(evaluate_fid_score(sample_test1.astype(np.float32)/255., np.load(data_test)[:10000].astype(np.float32)/255.))
@@ -291,25 +296,41 @@ if __name__ == "__main__":
                           [32,32,3],
                           [16,16,3],
                           [8,8,3],
+                          [8,8,1],
                           [7,7,3],
+                          [7,7,1],
                           [6,6,3],
+                          [6,6,1],
                           [5,5,3],
+                          [5,5,1],
                           [4,4,3],
+                          [4,4,1],
                           [3,3,3],
-                          [2,2,3]]
-            K_factor = 2 #n_component = K_factor * patch_size[0]
+                          [3,3,1],
+                          [2,2,3],
+                          [2,2,1]]
+            K_factor3 = 2 #n_component = K_factor * patch_size[0]
+            K_factor1 = 1 
             Niter = 200 #number of iterations for each patch_size[0]
         elif args.dataset == 'cifar10':
             patch_size = [[32,32,3], 
                           [16,16,3],
                           [8,8,3],
+                          [8,8,1],
                           [7,7,3],
+                          [7,7,1],
                           [6,6,3],
+                          [6,6,1],
                           [5,5,3],
+                          [5,5,1],
                           [4,4,3],
+                          [4,4,1],
                           [3,3,3],
-                          [2,2,3]]
-            K_factor = 2 #n_component = K_factor * patch_size[0]
+                          [3,3,1],
+                          [2,2,3],
+                          [2,2,1]]
+            K_factor3 = 2 #n_component = K_factor * patch_size[0]
+            K_factor1 = 1
             Niter = 200 #number of iterations for each patch_size[0]
         elif args.dataset in ['mnist', 'fmnist']:
             patch_size = [[28,28,1], 
@@ -320,27 +341,33 @@ if __name__ == "__main__":
                           [4,4,1],
                           [3,3,1],
                           [2,2,1]]
-            K_factor = 2 #n_component = K_factor * patch_size[0]
+            K_factor1 = 2 #n_component = K_factor * patch_size[0]
             Niter = 100 #number of iterations for each patch_size[0]
        
         for patch in patch_size:
-            n_component = K_factor * patch[0]
+            if patch[-1] == 3:
+                Niter = 200
+                n_component = K_factor3 * patch[0]
+            elif patch[-1] == 1:
+                Niter = 100
+                n_component = K_factor1 * patch[0]
+            #nsample_wT = int(np.log10(np.prod(patch)) * 15000) 
             for _ in range(Niter):
                 nlayer += 1 
                 if nlayer <= len(model.layer):
                     continue
                 if patch[0] == shape[0] and patch[2] == shape[2]:
-                    model, sample, sample_test = add_one_layer_inverse(model, data_train, sample, n_component, nsample_wT, nsample_spline, layer_type='regular', 
+                    model, sample, sample_test = add_one_layer_inverse(model, data_train, sample, n_component, nsample_wT, nsample, layer_type='regular', 
                                                                        batchsize=batchsize, sample_test=sample_test, put_data_on_disk=args.put_data_on_disk, pool=pool)
                 else:
                     shift = torch.randint(shape[0], (2,)).tolist()
-                    model, sample, sample_test = add_one_layer_inverse(model, data_train, sample, n_component, nsample_wT, nsample_spline, layer_type='patch', shape=shape, kernel=patch, 
+                    model, sample, sample_test = add_one_layer_inverse(model, data_train, sample, n_component, nsample_wT, nsample, layer_type='patch', shape=shape, kernel=patch, 
                                                                        shift=shift, batchsize=batchsize, sample_test=sample_test, put_data_on_disk=args.put_data_on_disk, pool=pool)
                 if len(model.layer) % update_iteration == 0:
                     print()
                     print('Finished %d iterations' % len(model.layer), 'Total Time:', time.time()-t_total)
                     print()
-                    torch.save(model, args.save + 'SIG_%s_seed%d_hierarchy9' % (args.dataset, args.seed))
+                    torch.save(model, args.save + 'SIG_%s_seed%d_hierarchy' % (args.dataset, args.seed))
                     if args.evaluateFID:
                         if args.put_data_on_disk:
                             sample_test1 = toimage(torch.tensor(np.load(sample_test)), shape)

@@ -360,11 +360,11 @@ def estimate_knots_gaussian(data, interp_nbin, above_noise, edge_bins=0, derivcl
                     deriv[i,-1] = (2**0.5 * torch.erfinv(2*torch.tensor(1-1/len(data), device=data.device)-1) - y[i,-1]) / (endx - x[i,-1])
                 elif extrapolate == 'regression':
                     endx = torch.sort(data[data[:,i]<x[i,0],i])[0]
-                    endy = 2**0.5 * torch.erfinv(2*torch.linspace(0.5,len(endx)-0.5,len(endx),device=data.device)/len(data)-1) - y[i,0]
+                    endy = 2**0.5 * torch.erfinv(2*torch.linspace(0.5,len(endx)-0.5,len(endx),device=data.device,dtype=torch.float64)/len(data)-1).to(torch.get_default_dtype()) - y[i,0]
                     endx -= x[i,0]
                     deriv[i,0] = torch.sum(endx*endy) / torch.sum(endx*endx)
                     endx = torch.sort(data[data[:,i]>x[i,-1],i], descending=True)[0]
-                    endy = 2**0.5 * torch.erfinv(2*(1-torch.linspace(0.5,len(endx)-0.5,len(endx),device=data.device)/len(data))-1) - y[i,-1]
+                    endy = 2**0.5 * torch.erfinv(2*(1-torch.linspace(0.5,len(endx)-0.5,len(endx),device=data.device,dtype=torch.float64)/len(data))-1).to(torch.get_default_dtype()) - y[i,-1]
                     endx -= x[i,-1]
                     deriv[i,-1] = torch.sum(endx*endy) / torch.sum(endx*endx)
 
