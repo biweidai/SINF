@@ -260,13 +260,13 @@ if args.restore:
 
     t = time.time()
 
-    data_train, logj_train = transform_batch_model(model, data_train, batchsize, logj=None, start=0, end=None):
+    data_train, logj_train = transform_batch_model(model, data_train, batchsize, logj=None, start=0, end=None)
     logp_train.append((torch.mean(logj_train) - ndim/2*torch.log(torch.tensor(2*math.pi)) - torch.mean(torch.sum(data_train**2,  dim=1)/2)).item())
 
-    data_validate, logj_validate = transform_batch_model(model, data_validate, batchsize, logj=None, start=0, end=None):
+    data_validate, logj_validate = transform_batch_model(model, data_validate, batchsize, logj=None, start=0, end=None)
     logp_validate.append((torch.mean(logj_validate) - ndim/2*torch.log(torch.tensor(2*math.pi)) - torch.mean(torch.sum(data_validate**2,  dim=1)/2)).item())
 
-    data_test, logj_test = transform_batch_model(model, data_test, batchsize, logj=None, start=0, end=None):
+    data_test, logj_test = transform_batch_model(model, data_test, batchsize, logj=None, start=0, end=None)
     logp_test.append((torch.mean(logj_test) - ndim/2*torch.log(torch.tensor(2*math.pi)) - torch.mean(torch.sum(data_test**2,  dim=1)/2)).item())
 
     print ('Current logp:', logp_train[-1], logp_validate[-1], logp_test[-1], 'time:', time.time()-t, 'iteration:', len(model.layer))
