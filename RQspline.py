@@ -284,6 +284,7 @@ class RQspline(nn.Module):
         b = deltayy * delta[dim, index-1] - deltay_delta_2s
         c = - s * (y[select]-yy[dim, index-1])
         discriminant = b.pow(2) - 4 * a * c
+        #discriminant[discriminant<0] = 0 
         assert (discriminant >= 0).all()
         xi = - 2*c / (b + torch.sqrt(discriminant))
         xi1_xi = xi * (1-xi)
@@ -313,6 +314,7 @@ def estimate_knots_gaussian(data, interp_nbin, above_noise, edge_bins=0, derivcl
     y = x.clone()
     deriv = torch.ones_like(x)
 
+    eps = 1e-5
     for i in range(data.shape[1]):
         if above_noise[i]:
             if KDE:
@@ -321,10 +323,10 @@ def estimate_knots_gaussian(data, interp_nbin, above_noise, edge_bins=0, derivcl
                 y[i] = 2**0.5 * scale * torch.erfinv(2*rho.cdf(x[i])-1)
                 dy = y[i,1:] - y[i,:-1]
                 dx = x[i,1:] - x[i,:-1]
-                while (dy<=0).any() or (dx<=0).any():
+                while (dy<=eps).any() or (dx<=eps).any():
                     select = torch.zeros(len(y[i]), dtype=bool, device=y.device)
-                    select[1:] = dy <= 0
-                    select[1:] += dx <= 0
+                    select[1:] = dy <= eps 
+                    select[1:] += dx <= eps 
                     x[i,select] = torch.rand(torch.sum(select).item(), device=x.device)*(x[i,-1]-x[i,0]) + x[i,0]
                     x[i] = torch.sort(x[i])[0]
                     y[i] = 2**0.5 * scale * torch.erfinv(2*rho.cdf(x[i])-1)
@@ -335,10 +337,10 @@ def estimate_knots_gaussian(data, interp_nbin, above_noise, edge_bins=0, derivcl
                 dy = y[i,1:] - y[i,:-1]
                 dx = x[i,1:] - x[i,:-1]
                 q0 = q.clone()
-                while (dy<=0).any() or (dx<=0).any():
+                while (dy<=eps).any() or (dx<=eps).any():
                     select = torch.zeros(len(y[i]), dtype=bool, device=y.device)
-                    select[1:] = dy <= 0
-                    select[1:] += dx <= 0
+                    select[1:] = dy <= eps 
+                    select[1:] += dx <= eps 
                     q0[select] = torch.rand(torch.sum(select).item(), device=q.device)*100
                     q0 = torch.sort(q0)[0]
                     x[i] = Percentile(data[:,i], q0).to(torch.get_default_dtype())
@@ -379,9 +381,9 @@ def estimate_knots_gaussian(data, interp_nbin, above_noise, edge_bins=0, derivcl
 
         else:
             dx = x[i,1:] - x[i,:-1]
-            while (dx<=0).any():
+            while (dx<=eps).any():
                 select = torch.zeros(len(x[i]), dtype=bool, device=x.device)
-                select[1:] = dx <= 0
+                select[1:] = dx <= eps 
                 x[i,select] = torch.rand(torch.sum(select).item(), device=x.device)*(x[i,-1]-x[i,0]) + x[i,0]
                 x[i] = torch.sort(x[i])[0]
                 y[i] = x[i]
@@ -412,14 +414,15 @@ def estimate_knots(data, sample, interp_nbin, above_noise, edge_bins=4, derivcli
     deriv = torch.ones_like(y)
     
     if KDE:
-        invq = torch.cat((torch.linspace(0, q[0], edge_bins, device=data.device)[:-1], q, torch.linspace(q[-1], 100, edge_bins, device=data.device)[1:]), dim=0)
+        invq = torch.cat((torch.linspace(0, q[0], 5, device=data.device)[:-1], q, torch.linspace(q[-1], 100, 5, device=data.device)[1:]), dim=0)
     else:
         invq = q
     #invy = Percentile(data.T, invq).to(torch.get_default_dtype())
-    invy = torch.zeros(data.shape[1], interp_nbin, device=data.device)
+    invy = torch.zeros(data.shape[1], len(invq), device=data.device)
     for i in range(len(invy)):
         invy[i] = Percentile(data[:,i], invq)
-
+    
+    eps = 1e-5
     for i in range(data.shape[1]):
         if above_noise[i]:
             if KDE:
@@ -445,10 +448,10 @@ def estimate_knots(data, sample, interp_nbin, above_noise, edge_bins=4, derivcli
 
                 dx = x[i,1:] - x[i,:-1]
                 dy = y[i,1:] - y[i,:-1]
-                while (dx<=0).any() or (dy<=0).any() or x[i,0]<=invy1[0] or x[i,-1]>=invy1[-1]:
+                while (dx<=eps).any() or (dy<=eps).any() or x[i,0]<=invy1[0] or x[i,-1]>=invy1[-1]:
                     select = torch.zeros(len(y[i]), dtype=bool, device=y.device)
-                    select[1:] = dx <= 0
-                    select[1:] += dy <= 0
+                    select[1:] = dx <= eps 
+                    select[1:] += dy <= eps 
                     select += x[i] <= invy1[0]
                     select += x[i] >= invy1[-1]
                     y[i,select] = torch.rand(torch.sum(select).item(), device=y.device)*(y[i,~select][-1]-y[i,~select][0]) + y[i,~select][0]
@@ -461,10 +464,10 @@ def estimate_knots(data, sample, interp_nbin, above_noise, edge_bins=4, derivcli
                 dy = y[i,1:] - y[i,:-1]
                 dx = x[i,1:] - x[i,:-1]
                 q0 = q.clone()
-                while (dy<=0).any() or (dx<=0).any():
+                while (dy<=eps).any() or (dx<=eps).any():
                     select = torch.zeros(len(y[i]), dtype=bool, device=y.device)
-                    select[1:] = dy <= 0
-                    select[1:] += dx <= 0
+                    select[1:] = dy <= eps 
+                    select[1:] += dx <= eps 
                     q0[select] = torch.rand(torch.sum(select).item(), device=y.device)*100
                     q0 = torch.sort(q0)[0]
                     y[i] = Percentile(sample[:,i], q0).to(torch.get_default_dtype())
@@ -504,9 +507,9 @@ def estimate_knots(data, sample, interp_nbin, above_noise, edge_bins=4, derivcli
                 deriv[i,-1] = torch.clamp(deriv[i,-1], 1/derivclip, derivclip)
         else:
             dx = x[i,1:] - x[i,:-1]
-            while (dx<=0).any():
+            while (dx<=eps).any():
                 select = torch.zeros(len(x[i]), dtype=bool, device=x.device)
-                select[1:] = dx <= 0
+                select[1:] = dx <= eps 
                 x[i,select] = torch.rand(torch.sum(select).item(), device=x.device)*(x[i,-1]-x[i,0]) + x[i,0]
                 x[i] = torch.sort(x[i])[0]
                 y[i] = x[i]
