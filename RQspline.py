@@ -356,19 +356,31 @@ def estimate_knots_gaussian(data, interp_nbin, above_noise, edge_bins=0, derivcl
                 deriv[i,-1] = 1
             else:
                 if extrapolate == 'endpoint':
-                    endx = torch.min(data[:,i])
-                    deriv[i,0] = (2**0.5 * torch.erfinv(2*torch.tensor(1/len(data), device=data.device)-1) - y[i,0]) / (endx - x[i,0])
-                    endx = torch.max(data[:,i])
-                    deriv[i,-1] = (2**0.5 * torch.erfinv(2*torch.tensor(1-1/len(data), device=data.device)-1) - y[i,-1]) / (endx - x[i,-1])
+                    endx1 = torch.min(data[:,i])
+                    endx2 = torch.max(data[:,i])
+                    if KDE:
+                        deriv[i,0] = (2**0.5 * scale * torch.erfinv(2*rho.cdf(endx1)-1) - y[i,0]) / (endx1 - x[i,0])
+                        deriv[i,-1] = (2**0.5 * scale * torch.erfinv(2*rho.cdf(endx2)-1) - y[i,-1]) / (endx2 - x[i,-1])
+                    else:
+                        deriv[i,0] = (2**0.5 * torch.erfinv(2*torch.tensor(0.5/len(data), device=data.device)-1) - y[i,0]) / (endx1 - x[i,0])
+                        deriv[i,-1] = (2**0.5 * torch.erfinv(2*torch.tensor(1-0.5/len(data), device=data.device)-1) - y[i,-1]) / (endx2 - x[i,-1])
                 elif extrapolate == 'regression':
-                    endx = torch.sort(data[data[:,i]<x[i,0],i])[0]
-                    endy = 2**0.5 * torch.erfinv(2*torch.linspace(0.5,len(endx)-0.5,len(endx),device=data.device,dtype=torch.float64)/len(data)-1).to(torch.get_default_dtype()) - y[i,0]
-                    endx -= x[i,0]
-                    deriv[i,0] = torch.sum(endx*endy) / torch.sum(endx*endx)
-                    endx = torch.sort(data[data[:,i]>x[i,-1],i], descending=True)[0]
-                    endy = 2**0.5 * torch.erfinv(2*(1-torch.linspace(0.5,len(endx)-0.5,len(endx),device=data.device,dtype=torch.float64)/len(data))-1).to(torch.get_default_dtype()) - y[i,-1]
-                    endx -= x[i,-1]
-                    deriv[i,-1] = torch.sum(endx*endy) / torch.sum(endx*endx)
+                    endx1 = torch.sort(data[data[:,i]<x[i,0],i])[0]
+                    endx2 = torch.sort(data[data[:,i]>x[i,-1],i], descending=True)[0]
+                    if KDE:
+                        if len(endx1) > 10:
+                            endx1 = Percentile(endx1, torch.linspace(0,1,11, device=endx1.device)[1:-1]).to(torch.get_default_dtype())
+                        endy1 = 2**0.5 * scale * torch.erfinv(2*rho.cdf(endx1).double()-1).to(torch.get_default_dtype()) - y[i,0]
+                        if len(endx2) > 10:
+                            endx2 = Percentile(endx2, torch.linspace(0,1,11, device=endx2.device)[1:-1]).to(torch.get_default_dtype())
+                        endy2 = 2**0.5 * scale * torch.erfinv(2*rho.cdf(endx2).double()-1).to(torch.get_default_dtype()) - y[i,-1]
+                    else:
+                        endy1 = 2**0.5 * torch.erfinv(2*torch.linspace(0.5,len(endx1)-0.5,len(endx1),device=data.device,dtype=torch.float64)/len(data)-1).to(torch.get_default_dtype()) - y[i,0]
+                        endy2 = 2**0.5 * torch.erfinv(2*(1-torch.linspace(0.5,len(endx2)-0.5,len(endx2),device=data.device,dtype=torch.float64)/len(data))-1).to(torch.get_default_dtype()) - y[i,-1]
+                    endx1 -= x[i,0]
+                    deriv[i,0] = torch.sum(endx1*endy1) / torch.sum(endx1*endx1)
+                    endx2 -= x[i,-1]
+                    deriv[i,-1] = torch.sum(endx2*endy2) / torch.sum(endx2*endx2)
 
             y[i] = (1-alpha[0]) * y[i] + alpha[0] * x[i]
             deriv[i,1:-1] = (1-alpha[0]) * deriv[i,1:-1] + alpha[0]
