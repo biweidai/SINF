@@ -152,7 +152,10 @@ def GIS(data_train, data_validate=None, iteration=None, n_component=None, interp
             break
 
         if verbose:
-            print ('logp:', logp_train, logp_validate, 'time:', time.time()-t, 'iteration:', len(model.layer), 'best:', best_Nlayer)
+            if data_validate is not None: 
+                print ('logp:', logp_train, logp_validate, 'time:', time.time()-t, 'iteration:', len(model.layer), 'best:', best_Nlayer)
+            else:
+                print ('logp:', logp_train, 'time:', time.time()-t, 'iteration:', len(model.layer))
 
     return model
 

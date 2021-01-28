@@ -381,6 +381,10 @@ def estimate_knots_gaussian(data, interp_nbin, above_noise, edge_bins=0, derivcl
                     deriv[i,0] = torch.sum(endx1*endy1) / torch.sum(endx1*endx1)
                     endx2 -= x[i,-1]
                     deriv[i,-1] = torch.sum(endx2*endy2) / torch.sum(endx2*endx2)
+                    if len(endx1) == 0:
+                        deriv[i,0] = 1
+                    if len(endx2) == 0:
+                        deriv[i,-1] = 1
 
             y[i] = (1-alpha[0]) * y[i] + alpha[0] * x[i]
             deriv[i,1:-1] = (1-alpha[0]) * deriv[i,1:-1] + alpha[0]
