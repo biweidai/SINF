@@ -691,7 +691,7 @@ class PatchSlicedTransport(nn.Module):
             ndata_wT = len(data)
         elif ndata_wT > len(data):
             ndata_wT = len(data)
-        if ndata_wT > len(sample):
+        if sample != 'gaussian' and ndata_wT > len(sample):
             ndata_wT = len(sample)
 
         SWD = torch.zeros(self.Nkernel, self.n_component, device=device)
