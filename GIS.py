@@ -65,7 +65,10 @@ def GIS(data_train, data_validate=None, iteration=None, n_component=None, interp
 
         model.add_layer(layer)
         if verbose:
-            print('After logit transform logp:', logp_train, logp_validate)
+            if data_validate is not None:
+                print('After logit transform logp:', logp_train, logp_validate)
+            else:
+                print('After logit transform logp:', logp_train)
     
     #whiten
     if whiten:
@@ -86,7 +89,10 @@ def GIS(data_train, data_validate=None, iteration=None, n_component=None, interp
 
         model.add_layer(layer)
         if verbose:
-            print('After whiten logp:', logp_train, logp_validate)
+            if data_validate is not None:
+                print('After whiten logp:', logp_train, logp_validate)
+            else:
+                print('After whiten logp:', logp_train)
 
     #GIS iterations
     while True:
@@ -158,6 +164,7 @@ def GIS(data_train, data_validate=None, iteration=None, n_component=None, interp
                 print ('logp:', logp_train, 'time:', time.time()-t, 'iteration:', len(model.layer))
 
     return model
+
 
 if __name__ == "__main__":
     
