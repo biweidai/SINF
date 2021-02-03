@@ -33,13 +33,13 @@ SIG achieves the following performance on :
 
 |       MNIST       |      Fashion      |      CIFAR10      |       CelebA      |
 | ----------------- | ----------------- | ----------------- | ----------------- |
-|        4.5        |       13.6        |       67.0        |       40.1        |
+|        4.5        |       13.7        |       66.5        |       37.3        |
 
 ### OoD detection (AUROC on models trained on FashionMNIST)
 
 |       MNIST       |      OMNIGLOT     |    FMNIST-hflip   |   FMNIST-vflip    |
 | ----------------- | ----------------- | ----------------- | ----------------- |
-|       0.977       |       0.990       |       0.636       |       0.815       |
+|       0.990       |       0.993       |       0.631       |       0.821       |
 
 The codes to reproduce these results are in SIG.ipynb
  
