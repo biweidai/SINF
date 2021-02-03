@@ -369,10 +369,10 @@ def estimate_knots_gaussian(data, interp_nbin, above_noise, edge_bins=0, derivcl
                     endx2 = torch.sort(data[data[:,i]>x[i,-1],i], descending=True)[0]
                     if KDE:
                         if len(endx1) > 10:
-                            endx1 = Percentile(endx1, torch.linspace(0,1,11, device=endx1.device)[1:-1]).to(torch.get_default_dtype())
+                            endx1 = Percentile(endx1, torch.linspace(0,100,11, device=endx1.device)[1:-1]).to(torch.get_default_dtype())
                         endy1 = 2**0.5 * scale * torch.erfinv(2*rho.cdf(endx1).double()-1).to(torch.get_default_dtype()) - y[i,0]
                         if len(endx2) > 10:
-                            endx2 = Percentile(endx2, torch.linspace(0,1,11, device=endx2.device)[1:-1]).to(torch.get_default_dtype())
+                            endx2 = Percentile(endx2, torch.linspace(0,100,11, device=endx2.device)[1:-1]).to(torch.get_default_dtype())
                         endy2 = 2**0.5 * scale * torch.erfinv(2*rho.cdf(endx2).double()-1).to(torch.get_default_dtype()) - y[i,-1]
                     else:
                         endy1 = 2**0.5 * torch.erfinv(2*torch.linspace(0.5,len(endx1)-0.5,len(endx1),device=data.device,dtype=torch.float64)/len(data)-1).to(torch.get_default_dtype()) - y[i,0]

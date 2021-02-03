@@ -3,7 +3,7 @@ from load_data import *
 import argparse
 
 def GIS(data_train, data_validate=None, iteration=None, n_component=None, interp_nbin=None, KDE=True, bw_factor=0.5, alpha=None, edge_bins=None, 
-        ndata_wT=None, MSWD_max_iter=None, logit=False, whiten=False, batchsize=None, nocuda=False, patch=False, shape=[28,28,1], verbose=True):
+        ndata_wT=None, MSWD_max_iter=None, logit=False, Whiten=False, batchsize=None, nocuda=False, patch=False, shape=[28,28,1], verbose=True):
     
     assert data_validate is not None or iteration is not None
  
@@ -71,7 +71,7 @@ def GIS(data_train, data_validate=None, iteration=None, n_component=None, interp
                 print('After logit transform logp:', logp_train)
     
     #whiten
-    if whiten:
+    if Whiten:
         layer = whiten(ndim_data=ndim, scale=True, ndim_latent=ndim).requires_grad_(False).to(device)
         layer.fit(data_train)
 
@@ -154,14 +154,14 @@ def GIS(data_train, data_validate=None, iteration=None, n_component=None, interp
                 model.layer = model.layer[:best_Nlayer]
                 break
 
-        if iteration is not None and len(model.layer) >= iteration:
-            break
-
         if verbose:
             if data_validate is not None: 
                 print ('logp:', logp_train, logp_validate, 'time:', time.time()-t, 'iteration:', len(model.layer), 'best:', best_Nlayer)
             else:
                 print ('logp:', logp_train, 'time:', time.time()-t, 'iteration:', len(model.layer))
+
+        if iteration is not None and len(model.layer) >= iteration:
+            break
 
     return model
 
