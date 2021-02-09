@@ -8,7 +8,7 @@ if __name__ == "__main__":
     
     # data
     parser.add_argument('--dataset', type=str, default='power',
-                        choices=['power', 'gas', 'hepmass', 'miniboone', 'bsds300', 'mnist', 'fmnist', 'cifar10'],
+                        choices=['power', 'gas', 'hepmass', 'miniboone', 'bsds300', 'mnist', 'fmnist'],
                         help='Name of dataset to use.')
     
     parser.add_argument('--train_size', type=int, default=-1,
@@ -58,9 +58,6 @@ if __name__ == "__main__":
     elif args.dataset == 'fmnist':
         data_train, data_test = load_data_fmnist()
         shape = [28,28,1]
-    elif args.dataset == 'cifar10':
-        data_train, data_test = load_data_cifar10()
-        shape = [32,32,3]
     
     if args.dataset in ['power', 'gas', 'hepmass', 'miniboone', 'bsds300']:
         data_train = torch.tensor(data_train).float().to(device)
@@ -136,7 +133,7 @@ if __name__ == "__main__":
         best_validate_logp = -1e10
         best_Nlayer = 0
         
-        if args.dataset in ['mnist', 'fmnist', 'cifar10']:
+        if args.dataset in ['mnist', 'fmnist']:
             #logit transform
             layer = logit(lambd=1e-5).to(device)
             data_train, logj_train = layer(data_train)
@@ -181,20 +178,20 @@ if __name__ == "__main__":
         if args.dataset in ['power', 'gas', 'hepmass', 'miniboone', 'bsds300']:
             layer = SlicedTransport(ndim=ndim, n_component=n_component, interp_nbin=interp_nbin).requires_grad_(False).to(device)
         elif len(model.layer) % 2 == 0:
-            kernel = [4, 4]
+            kernel = [4, 4, 1]
             n_component = 8
-            MSWD_max_iter = min(len(data_train) // (16*shape[-1]), 200)
+            MSWD_max_iter = min(len(data_train) // 16, 200)
             shift = torch.randint(4, (2,)).tolist()
-            layer = PatchSlicedTransport(shape=shape, kernel_size=kernel, shift=shift, n_component=n_component, interp_nbin=interp_nbin).requires_grad_(False).to(device)
+            layer = PatchSlicedTransport(shape=shape, kernel=kernel, shift=shift, n_component=n_component, interp_nbin=interp_nbin).requires_grad_(False).to(device)
         else:
-            kernel = [2, 2]
+            kernel = [2, 2, 1]
             n_component = 4
-            MSWD_max_iter = min(len(data_train) // (4*shape[-1]), 200)
+            MSWD_max_iter = min(len(data_train) // 4, 200)
             shift = torch.randint(2, (2,)).tolist()
-            layer = PatchSlicedTransport(shape=shape, kernel_size=kernel, shift=shift, n_component=n_component, interp_nbin=interp_nbin).requires_grad_(False).to(device)
+            layer = PatchSlicedTransport(shape=shape, kernel=kernel, shift=shift, n_component=n_component, interp_nbin=interp_nbin).requires_grad_(False).to(device)
        
         #fit the layer
-        if ndata_wT < len(data_train) and ndim > 1:
+        if ndata_wT < len(data_train):
             order = torch.randperm(data_train.shape[0])
             layer.fit_wT(data=data_train[order][:ndata_wT], MSWD_max_iter=MSWD_max_iter, verbose=verbose)
         else:
@@ -222,8 +219,10 @@ if __name__ == "__main__":
         else:
             wait += 1
     
-        print ('logp:', logp_train[-1], logp_validate[-1], logp_test[-1], 'time:', time.time()-t, 'iteration:', len(model.layer), 'best:', best_Nlayer)
-        print ()
+        print('logp:', logp_train[-1], logp_validate[-1], logp_test[-1], 'time:', time.time()-t, 'iteration:', len(model.layer), 'best:', best_Nlayer)
+        if args.dataset in ['mnist', 'fmnist']:
+            print('BPD:', 8-logp_train[-1]/ndim/math.log(2), 8-logp_validate[-1]/ndim/math.log(2), 8-logp_test[-1]/ndim/math.log(2))
+        print()
     
         if wait == 100:
             break
