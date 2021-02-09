@@ -20,7 +20,7 @@ def toimage(sample, shape):
     return sample
 
 
-def add_one_layer_inverse(model, data, sample, n_component, nsample_wT, nsample, layer_type='regular', shape=None, kernel=None, shift=None, interp_nbin=400, MSWD_max_iter=200, edge_bins=10, derivclip=1, extrapolate='regression', alpha=(0., 0.), noise_threshold=0, KDE=False, bw_factor_data=1, bw_factor_sample=1, batchsize=None, verbose=True, sample_test=None, pool=None):
+def add_one_layer_inverse(model, data, sample, n_component, nsample_wT, nsample, layer_type='regular', shape=None, kernel=None, shift=None, interp_nbin=200, MSWD_max_iter=200, edge_bins=5, derivclip=1, extrapolate='regression', alpha=(0., 0.), noise_threshold=0, KDE=False, bw_factor_data=1, bw_factor_sample=1, batchsize=None, verbose=True, sample_test=None, pool=None):
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -114,17 +114,16 @@ if __name__ == "__main__":
                         help='Where to save the trained model.')
     
     parser.add_argument('--restore', type=str, help='Path to model to restore.')
+
+    parser.add_argument('--improvesample', type=str, help='Path to load the samples to be improved.')
+
+    parser.add_argument('--improvesampletest', type=str, help='Path to load the test samples to be improved.')
     
     parser.add_argument('--nohierarchy', action='store_true',
                         help='Whether to use hierarchical patch based modeling strategy.')
     
     args = parser.parse_args()
     
-    if torch.cuda.is_available():
-        if torch.cuda.device_count() > 1:
-            args.mp = True
-        else:
-            args.mp = False
     if args.mp:
         mp.set_start_method('spawn', force=True)
         if torch.cuda.is_available():
@@ -195,19 +194,34 @@ if __name__ == "__main__":
         try:
             sample = torch.as_tensor(np.load(args.restore + '_sample_train.npy'))
         except:
-            sample = torch.randn(nsample, ndim)
+            if args.improvesample:
+                sample = preprocess(np.load(args.improvesample))
+                nsample = len(sample)
+                if nsample_wT > nsample:
+                    nsample_wT = nsample
+            else:
+                sample = torch.randn(nsample, ndim)
             t = time.time()
             sample = transform_batch_model(model, sample, batchsize, start=None, end=0)[0]
             print ('Transform samples. time:', time.time()-t, 'iteration:', len(model.layer))
     else:
-        sample = torch.randn(nsample, ndim)
+        if args.improvesample:
+            sample = preprocess(np.load(args.improvesample))
+            nsample = len(sample)
+            if nsample_wT > nsample:
+                nsample_wT = nsample
+        else:
+            sample = torch.randn(nsample, ndim)
         
     if args.evaluateFID:
         if args.restore:
             try:
                 sample_test = torch.as_tensor(np.load(args.restore + '_sample_test.npy'))
             except:
-                sample_test = torch.randn(10000, ndim)
+                if args.improvesampletest:
+                    sample_test = preprocess(np.load(args.improvesampletest))
+                else:
+                    sample_test = torch.randn(10000, ndim)
                 t = time.time()
                 sample_test = transform_batch_model(model, sample_test, batchsize, start=None, end=0)[0]
                 model = model.cpu()
@@ -216,12 +230,16 @@ if __name__ == "__main__":
                 del sample_test1
                 print ('Transform test samples. time:', time.time()-t, 'iteration:', len(model.layer), 'Current FID score:', FID[-1])
         else:
-            sample_test = torch.randn(10000, ndim)
+            if args.improvesampletest:
+                sample_test = preprocess(np.load(args.improvesampletest))
+            else:
+                sample_test = torch.randn(10000, ndim)
     
     else:
         sample_test = None
     
     model = model.cpu()
+    
     
     nlayer = 0 
     if not args.nohierarchy:
@@ -274,14 +292,21 @@ if __name__ == "__main__":
                           [2,2,1]]
             K_factor1 = 2 #n_component = K_factor * patch_size[0]
 
-        args.save = args.save + 'SIG_%s_seed%d_hierarchy' % (args.dataset, args.seed)
+        if args.improvesample:
+            args.save = args.save + 'SIG_%s_seed%d_hierarchy_improve' % (args.dataset, args.seed)
+        else:
+            args.save = args.save + 'SIG_%s_seed%d_hierarchy' % (args.dataset, args.seed)
        
         for patch in patch_size:
             if patch[-1] == 3:
                 Niter = 200
+                if args.improvesample:
+                    Niter = 60  
                 n_component = K_factor3 * patch[0]
             elif patch[-1] == 1:
                 Niter = 100
+                if args.improvesample:
+                    Niter = 30  
                 n_component = K_factor1 * patch[0]
             for _ in range(Niter):
                 nlayer += 1 
@@ -292,8 +317,8 @@ if __name__ == "__main__":
                                                                        batchsize=batchsize, sample_test=sample_test, pool=pool)
                 else:
                     shift = torch.randint(shape[0], (2,)).tolist()
-                    model, sample, sample_test = add_one_layer_inverse(model, data_train, sample, n_component, nsample_wT, nsample, layer_type='patch', shape=shape, 
-                                                                       kernel=patch, shift=shift, batchsize=batchsize, sample_test=sample_test, pool=pool)
+                    model, sample, sample_test = add_one_layer_inverse(model, data_train, sample, n_component, nsample_wT, nsample, layer_type='patch', shape=shape, kernel=patch, 
+                                                                       shift=shift, batchsize=batchsize, sample_test=sample_test, pool=pool)
                 if len(model.layer) % update_iteration == 0:
                     print()
                     print('Finished %d iterations' % len(model.layer), 'Total Time:', time.time()-t_total)
@@ -309,34 +334,45 @@ if __name__ == "__main__":
                         del sample_test1
         
     else:
-        args.save + 'SIG_%s_seed%d' % (args.dataset, args.seed)
+        args.save = args.save + 'SIG_%s_seed%d' % (args.dataset, args.seed)
         if args.dataset == 'celeba':
             n_component = 128 
             Niter = 2700
+            if args.improvesample:
+                Niter = 810  
         elif args.dataset == 'cifar10':
             n_component = 64
             Niter = 2500
+            if args.improvesample:
+                Niter = 750  
         elif args.dataset in ['mnist', 'fmnist']:
-            n_component = 56
+            n_component = 56 
             Niter = 800
+            if args.improvesample:
+                Niter = 240  
         
         for _ in range(Niter):
             nlayer += 1
             if nlayer <= len(model.layer):
                 continue
-            model, sample, sample_test = add_one_layer_inverse(model, data_train, sample, n_component, nsample_wT, nsample_spline, layer_type='regular', 
+            model, sample, sample_test = add_one_layer_inverse(model, data_train, sample, n_component, nsample_wT, nsample, layer_type='regular', 
                                                                batchsize=batchsize, sample_test=sample_test)
             if len(model.layer) % update_iteration == 0:
                 print()
                 print('Finished %d iterations' % len(model.layer), 'Total Time:', time.time()-t_total)
                 print()
                 torch.save(model, args.save)
+                np.save(args.save + '_sample_train.npy', sample.numpy())
+                np.save(args.save + '_sample_test.npy', sample_test.numpy())
                 if args.evaluateFID:
                     sample_test1 = toimage(sample_test, shape)
                     FID.append(evaluate_fid_score(sample_test1.astype(np.float32)/255., data_test.astype(np.float32)/255.))
                     print('Current FID score:', FID[-1])
                     del sample_test1
     
+    torch.save(model, args.save)
+    np.save(args.save + '_sample_train.npy', sample.numpy())
+    np.save(args.save + '_sample_test.npy', sample_test.numpy())
     if pool:
         pool.close()
         pool.join()
