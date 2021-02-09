@@ -15,8 +15,8 @@ def load_data_mnist():
         transforms_.ToTensor(),
         transforms_.Normalize((0.5,), (0.5,))
     ])
-    train_data = torchvision.datasets.MNIST(root="/global/scratch/biwei/data", train=True, download=True, transform=transform)
-    test_data = torchvision.datasets.MNIST(root="/global/scratch/biwei/data", train=False, download=True, transform=transform)
+    train_data = torchvision.datasets.MNIST(root="./data", train=True, download=True, transform=transform)
+    test_data = torchvision.datasets.MNIST(root="./data", train=False, download=True, transform=transform)
     return train_data.data, test_data.data
 
 
@@ -26,8 +26,8 @@ def load_data_fmnist():
         transforms_.ToTensor(),
         transforms_.Normalize((0.5,), (0.5,))
     ])
-    train_data = torchvision.datasets.FashionMNIST(root="/global/scratch/biwei/data", train=True, download=True, transform=transform)
-    test_data = torchvision.datasets.FashionMNIST(root="/global/scratch/biwei/data", train=False, download=True, transform=transform)
+    train_data = torchvision.datasets.FashionMNIST(root="./data", train=True, download=True, transform=transform)
+    test_data = torchvision.datasets.FashionMNIST(root="./data", train=False, download=True, transform=transform)
     return train_data.data, test_data.data
 
 
@@ -37,8 +37,8 @@ def load_data_cifar10():
         transforms_.ToTensor(),
         transforms_.Normalize((0.5,), (0.5,))
     ])
-    train_data = torchvision.datasets.CIFAR10(root="/global/scratch/biwei/data", train=True, download=True, transform=transform)
-    test_data = torchvision.datasets.CIFAR10(root="/global/scratch/biwei/data", train=False, download=True, transform=transform)
+    train_data = torchvision.datasets.CIFAR10(root="./data", train=True, download=True, transform=transform)
+    test_data = torchvision.datasets.CIFAR10(root="./data", train=False, download=True, transform=transform)
     return train_data.data, test_data.data
 
 
@@ -46,9 +46,9 @@ def load_data_cifar10():
 def load_data_celeba(flag='training'):
     assert flag in ['training', 'validation', 'test']
     if flag == 'training':
-        return np.load('/global/scratch/biwei/data/CelebA/CelebA_train.npy')
+        return np.load('./data/CelebA/CelebA_train.npy')
     elif flag == 'test':
-        return np.load('/global/scratch/biwei/data/CelebA/CelebA_test.npy') 
+        return np.load('./data/CelebA/CelebA_test.npy') 
 
 '''
 def load_data_celeba(flag='training', side_length=None, num=None):
@@ -90,7 +90,7 @@ def load_data_celeba(flag='training', side_length=None, num=None):
 
 def load_data_power():
     def load_data():
-        return np.load('/global/scratch/biwei/data/power/data.npy')
+        return np.load('./data/power/data.npy')
 
     def load_data_split_with_noise():
     
@@ -189,7 +189,7 @@ def load_data_gas():
     
         return data_train, data_validate, data_test
 
-    return load_data_and_clean_and_split('/global/scratch/biwei/data/gas/ethylene_CO.pickle')    
+    return load_data_and_clean_and_split('./data/gas/ethylene_CO.pickle')    
 
 
 
@@ -253,7 +253,7 @@ def load_data_hepmass():
         data_train = data_train[0:-N_validate]
     
         return data_train, data_validate, data_test
-    return load_data_no_discrete_normalised_as_array('/global/scratch/biwei/data/hepmass/') 
+    return load_data_no_discrete_normalised_as_array('./data/hepmass/') 
 
 
 
@@ -301,11 +301,11 @@ def load_data_miniboone():
     
         return data_train, data_validate, data_test
     
-    return load_data_normalised('/global/scratch/biwei/data/miniboone/data.npy')
+    return load_data_normalised('./data/miniboone/data.npy')
 
 
 
 def load_data_bsds300():
-    f = h5py.File('/global/scratch/biwei/data/BSDS300/BSDS300.hdf5', 'r')
+    f = h5py.File('./data/BSDS300/BSDS300.hdf5', 'r')
     return f['train'], f['validation'], f['test']
  
