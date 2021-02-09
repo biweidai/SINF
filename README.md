@@ -1,4 +1,4 @@
-# Sliced Iterative Generator (SIG) & Gaussianizing Iterative Slicing (GIS)
+# Sliced Iterative Normalizing Flows (SINF)
 
 ## Requirements
 
