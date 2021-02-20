@@ -202,9 +202,11 @@ class whiten(nn.Module):
         self.register_buffer('select', select)
 
 
-    def fit(self, data):
+    def fit(self, data, weight=None):
 
         assert data.ndim == 2 and data.shape[1] == self.ndim_data
+        if weight is not None:
+            raise NotImplementedError
 
         with torch.no_grad():
             self.mean[:] = torch.mean(data, dim=0)

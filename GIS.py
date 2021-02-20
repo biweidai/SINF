@@ -2,7 +2,7 @@ from SIT import *
 from load_data import * 
 import argparse
 
-def GIS(data_train, data_validate=None, iteration=None, n_component=None, interp_nbin=None, KDE=True, bw_factor=0.5, alpha=None, edge_bins=None, 
+def GIS(data_train, data_validate=None, iteration=None, weight_train=None, weight_validate=None, n_component=None, interp_nbin=None, KDE=True, bw_factor=0.5, alpha=None, edge_bins=None, 
         ndata_wT=None, MSWD_max_iter=None, logit=False, Whiten=False, batchsize=None, nocuda=False, patch=False, shape=[28,28,1], verbose=True):
     
     assert data_validate is not None or iteration is not None
@@ -38,13 +38,16 @@ def GIS(data_train, data_validate=None, iteration=None, n_component=None, interp
     if nocuda:
         device = torch.device("cpu")
     data_train = data_train.to(device)
-    if data_validate is not None:
-        data_validate = data_validate.to(device)
+    if weight_train is not None:
+        weight_train = weight_train.to(device)
 
     #define the model
     model = SIT(ndim=ndim).requires_grad_(False).to(device)
     logj_train = torch.zeros(len(data_train), device=device)
     if data_validate is not None:
+        data_validate = data_validate.to(device)
+        if weight_validate is not None:
+            weight_validate = weight_validate.to(device)
         logj_validate = torch.zeros(len(data_validate), device=device)
         best_logp_validate = -1e10
         best_Nlayer = 0
@@ -55,11 +58,17 @@ def GIS(data_train, data_validate=None, iteration=None, n_component=None, interp
     if logit:
         layer = logit(lambd=1e-5).to(device)
         data_train, logj_train = layer(data_train)
-        logp_train = (torch.mean(logj_train) - ndim/2*torch.log(torch.tensor(2*math.pi)) - torch.mean(torch.sum(data_train**2,  dim=1)/2)).item()
+        if weight_train is None:
+            logp_train = (torch.mean(logj_train) - ndim/2*torch.log(torch.tensor(2*math.pi)) - torch.mean(torch.sum(data_train**2,  dim=1)/2)).item()
+        else:
+            logp_train = (torch.sum(logj_train*weight_train)/torch.sum(weight_train) - ndim/2*torch.log(torch.tensor(2*math.pi)) - torch.sum(weight_train*torch.sum(data_train**2,  dim=1)/2)/torch.sum(weight_train)).item()
 
         if data_validate is not None:
             data_validate, logj_validate = layer(data_validate)
-            logp_validate = (torch.mean(logj_validate) - ndim/2*torch.log(torch.tensor(2*math.pi)) - torch.mean(torch.sum(data_validate**2,  dim=1)/2)).item()
+            if weight_validate is None:
+                logp_validate = (torch.mean(logj_validate) - ndim/2*torch.log(torch.tensor(2*math.pi)) - torch.mean(torch.sum(data_validate**2,  dim=1)/2)).item()
+            else:
+                logp_validate = (torch.sum(logj_validate*weight_validate)/torch.sum(weight_validate) - ndim/2*torch.log(torch.tensor(2*math.pi)) - torch.sum(weight_validate*torch.sum(data_validate**2,  dim=1)/2)/torch.sum(weight_validate)).item()
             best_logp_validate = logp_validate
             best_Nlayer = 1
 
@@ -73,16 +82,22 @@ def GIS(data_train, data_validate=None, iteration=None, n_component=None, interp
     #whiten
     if Whiten:
         layer = whiten(ndim_data=ndim, scale=True, ndim_latent=ndim).requires_grad_(False).to(device)
-        layer.fit(data_train)
+        layer.fit(data_train, weight_train)
 
         data_train, logj_train0 = layer(data_train)
         logj_train += logj_train0
-        logp_train = (torch.mean(logj_train) - ndim/2*torch.log(torch.tensor(2*math.pi)) - torch.mean(torch.sum(data_train**2,  dim=1)/2)).item()
+        if weight_train is None:
+            logp_train = (torch.mean(logj_train) - ndim/2*torch.log(torch.tensor(2*math.pi)) - torch.mean(torch.sum(data_train**2,  dim=1)/2)).item()
+        else:
+            logp_train = (torch.sum(logj_train*weight_train)/torch.sum(weight_train) - ndim/2*torch.log(torch.tensor(2*math.pi)) - torch.sum(weight_train*torch.sum(data_train**2,  dim=1)/2)/torch.sum(weight_train)).item()
 
         if data_validate is not None:
             data_validate, logj_validate0 = layer(data_validate)
             logj_validate += logj_validate0
-            logp_validate = (torch.mean(logj_validate) - ndim/2*torch.log(torch.tensor(2*math.pi)) - torch.mean(torch.sum(data_validate**2,  dim=1)/2)).item()
+            if weight_validate is None:
+                logp_validate = (torch.mean(logj_validate) - ndim/2*torch.log(torch.tensor(2*math.pi)) - torch.mean(torch.sum(data_validate**2,  dim=1)/2)).item()
+            else:
+                logp_validate = (torch.sum(logj_validate*weight_validate)/torch.sum(weight_validate) - ndim/2*torch.log(torch.tensor(2*math.pi)) - torch.sum(weight_validate*torch.sum(data_validate**2,  dim=1)/2)/torch.sum(weight_validate)).item()
             if logp_validate > best_logp_validate:
                 best_logp_validate = logp_validate
                 best_Nlayer = len(model.layer)
@@ -127,23 +142,25 @@ def GIS(data_train, data_validate=None, iteration=None, n_component=None, interp
             layer = SlicedTransport(ndim=ndim, n_component=n_component, interp_nbin=interp_nbin).requires_grad_(False).to(device)
         
         #fit the layer
-        if ndata_wT < len(data_train):
-            order = torch.randperm(data_train.shape[0])
-            layer.fit_wT(data=data_train[order[:ndata_wT]], MSWD_max_iter=MSWD_max_iter, verbose=verbose)
-        else:
-            layer.fit_wT(data=data_train, MSWD_max_iter=MSWD_max_iter, verbose=verbose)
+        layer.fit_wT(data=data_train, weight=weight, ndata_wT=ndata_wT, MSWD_max_iter=MSWD_max_iter, verbose=verbose)
 
-        layer.fit_spline(data=data_train, edge_bins=edge_bins, alpha=alpha, KDE=KDE, bw_factor=bw_factor, batchsize=batchsize, verbose=verbose)
+        layer.fit_spline(data=data_train, weight=weight, edge_bins=edge_bins, alpha=alpha, KDE=KDE, bw_factor=bw_factor, batchsize=batchsize, verbose=verbose)
 
         #update the data
         data_train, logj_train = transform_batch_layer(layer, data_train, batchsize, logj=logj_train, direction='forward')
-        logp_train = (torch.mean(logj_train) - model.ndim/2*torch.log(torch.tensor(2*math.pi)) - torch.mean(torch.sum(data_train**2,  dim=1)/2)).item()
+        if weight_train is None:
+            logp_train = (torch.mean(logj_train) - ndim/2*torch.log(torch.tensor(2*math.pi)) - torch.mean(torch.sum(data_train**2,  dim=1)/2)).item()
+        else:
+            logp_train = (torch.sum(logj_train*weight_train)/torch.sum(weight_train) - ndim/2*torch.log(torch.tensor(2*math.pi)) - torch.sum(weight_train*torch.sum(data_train**2,  dim=1)/2)/torch.sum(weight_train)).item()
 
         model.add_layer(layer)
 
         if data_validate is not None:
             data_validate, logj_validate = transform_batch_layer(layer, data_validate, batchsize, logj=logj_validate, direction='forward')
-            logp_validate = (torch.mean(logj_validate) - model.ndim/2*torch.log(torch.tensor(2*math.pi)) - torch.mean(torch.sum(data_validate**2,  dim=1)/2)).item()
+            if weight_validate is None:
+                logp_validate = (torch.mean(logj_validate) - ndim/2*torch.log(torch.tensor(2*math.pi)) - torch.mean(torch.sum(data_validate**2,  dim=1)/2)).item()
+            else:
+                logp_validate = (torch.sum(logj_validate*weight_validate)/torch.sum(weight_validate) - ndim/2*torch.log(torch.tensor(2*math.pi)) - torch.sum(weight_validate*torch.sum(data_validate**2,  dim=1)/2)/torch.sum(weight_validate)).item()
             if logp_validate > best_logp_validate:
                 best_logp_validate = logp_validate
                 best_Nlayer = len(model.layer)
