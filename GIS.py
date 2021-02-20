@@ -142,9 +142,9 @@ def GIS(data_train, data_validate=None, iteration=None, weight_train=None, weigh
             layer = SlicedTransport(ndim=ndim, n_component=n_component, interp_nbin=interp_nbin).requires_grad_(False).to(device)
         
         #fit the layer
-        layer.fit_wT(data=data_train, weight=weight, ndata_wT=ndata_wT, MSWD_max_iter=MSWD_max_iter, verbose=verbose)
+        layer.fit_wT(data=data_train, weight=weight_train, ndata_wT=ndata_wT, MSWD_max_iter=MSWD_max_iter, verbose=verbose)
 
-        layer.fit_spline(data=data_train, weight=weight, edge_bins=edge_bins, alpha=alpha, KDE=KDE, bw_factor=bw_factor, batchsize=batchsize, verbose=verbose)
+        layer.fit_spline(data=data_train, weight=weight_train, edge_bins=edge_bins, alpha=alpha, KDE=KDE, bw_factor=bw_factor, batchsize=batchsize, verbose=verbose)
 
         #update the data
         data_train, logj_train = transform_batch_layer(layer, data_train, batchsize, logj=logj_train, direction='forward')
