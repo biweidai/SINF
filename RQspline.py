@@ -1,7 +1,24 @@
 import torch
 import torch.nn as nn
 import math
-from SlicedWasserstein import Percentile
+
+def Percentile(input, percentiles):
+    """
+    Find the percentiles of a tensor along the last dimension.
+    Adapted from https://github.com/aliutkus/torchpercentile/blob/master/torchpercentile/percentile.py
+    """
+    percentiles = percentiles.double()
+    in_sorted, in_argsort = torch.sort(input, dim=-1)
+    positions = percentiles * (input.shape[-1]-1) / 100
+    floored = torch.floor(positions)
+    ceiled = floored + 1
+    ceiled[ceiled > input.shape[-1] - 1] = input.shape[-1] - 1
+    weight_ceiled = positions-floored
+    weight_floored = 1.0 - weight_ceiled
+    d0 = in_sorted[..., floored.long()] * weight_floored
+    d1 = in_sorted[..., ceiled.long()] * weight_ceiled
+    result = d0+d1
+    return result
 
 class kde(object):
     """
@@ -295,7 +312,10 @@ class RQspline(nn.Module):
         return x, logderiv
 
 
-def estimate_knots_gaussian(data, interp_nbin, above_noise, edge_bins=0, derivclip=None, extrapolate='regression', alpha=(0.9, 0.99), KDE=True, bw_factor=1, batchsize=None):
+def estimate_knots_gaussian(data, interp_nbin, above_noise, weight=None, edge_bins=0, derivclip=None, extrapolate='regression', alpha=(0.9, 0.99), KDE=True, bw_factor=1, batchsize=None):
+
+    if not KDE and weight is not None:
+        raise NotImplementedError
 
     start = 100 / (interp_nbin-2*edge_bins+1)
     end = 100-start
@@ -318,7 +338,7 @@ def estimate_knots_gaussian(data, interp_nbin, above_noise, edge_bins=0, derivcl
     for i in range(data.shape[1]):
         if above_noise[i]:
             if KDE:
-                rho = kde(data[:,i], bw_factor=bw_factor, batchsize=batchsize)
+                rho = kde(data[:,i], bw_factor=bw_factor, weights=weight, batchsize=batchsize)
                 scale = (rho.covariance[0,0]+1)**0.5
                 y[i] = 2**0.5 * scale * torch.erfinv(2*rho.cdf(x[i])-1)
                 dy = y[i,1:] - y[i,:-1]

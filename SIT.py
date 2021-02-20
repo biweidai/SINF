@@ -418,7 +418,7 @@ class SlicedTransport(nn.Module):
         self.transform1D = RQspline(self.n_component, interp_nbin)
 
 
-    def fit_wT(self, data, sample='gaussian', ndata_wT=None, MSWD_p=2, MSWD_max_iter=200, pool=None, verbose=True):
+    def fit_wT(self, data, sample='gaussian', weight=None, ndata_wT=None, MSWD_p=2, MSWD_max_iter=200, pool=None, verbose=True):
 
         #fit the directions to apply 1D transform
 
@@ -436,9 +436,14 @@ class SlicedTransport(nn.Module):
                 sample = sample[torch.randperm(len(sample), device=sample.device)[:ndata_wT]].to(self.wT.device)
         if ndata_wT == len(data):
             data = data.to(self.wT.device)
+            if weight is not None:
+                weight = weight.to(self.wT.device)
         else:
-            data = data[torch.randperm(len(data), device=data.device)[:ndata_wT]].to(self.wT.device)
-        wT, SWD = maxSWDdirection(data, x2=sample, n_component=self.n_component, maxiter=MSWD_max_iter, p=MSWD_p)
+            order = torch.randperm(len(data), device=data.device)[:ndata_wT]
+            data = data[order].to(self.wT.device)
+            if weight is not None:
+                weight = weight[order].to(self.wT.device)
+        wT, SWD = maxSWDdirection(data, x2=sample, weight=weight, n_component=self.n_component, maxiter=MSWD_max_iter, p=MSWD_p)
         with torch.no_grad():
             SWD, indices = torch.sort(SWD, descending=True)
             wT = wT[:,indices]
@@ -450,7 +455,7 @@ class SlicedTransport(nn.Module):
         return self 
 
 
-    def fit_spline(self, data, edge_bins=0, derivclip=None, extrapolate='regression', alpha=(0.9,0.99), noise_threshold=0, MSWD_p=2, KDE=True, bw_factor=1, batchsize=None, verbose=True):
+    def fit_spline(self, data, weight=None, edge_bins=0, derivclip=None, extrapolate='regression', alpha=(0.9,0.99), noise_threshold=0, MSWD_p=2, KDE=True, bw_factor=1, batchsize=None, verbose=True):
 
         #fit the 1D transform \Psi
 
@@ -463,15 +468,17 @@ class SlicedTransport(nn.Module):
                 tstart = start_timing()
             
             if noise_threshold > 0:
-                SWD = SlicedWasserstein_direction(data, self.wT.to(data.device), second='gaussian', p=MSWD_p)
+                SWD = SlicedWasserstein_direction(data, self.wT.to(data.device), second='gaussian', weight=weight, p=MSWD_p)
                 above_noise = SWD > noise_threshold
             else:
                 above_noise = torch.ones(self.wT.shape[1], dtype=bool, device=self.wT.device) 
 
             data0 = (data @ self.wT.to(data.device)).to(self.wT.device)
+            if weight is not None:
+                weight = weight.to(self.wT.device)
 
             #build rational quadratic spline transform
-            x, y, deriv = estimate_knots_gaussian(data0, interp_nbin=self.interp_nbin, above_noise=above_noise, edge_bins=edge_bins, 
+            x, y, deriv = estimate_knots_gaussian(data0, interp_nbin=self.interp_nbin, above_noise=above_noise, weight=weight, edge_bins=edge_bins, 
                                                   derivclip=derivclip, extrapolate=extrapolate, alpha=alpha, KDE=KDE, bw_factor=bw_factor, batchsize=batchsize)
             self.transform1D.set_param(x, y, deriv)
 

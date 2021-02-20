@@ -1,30 +1,12 @@
 import torch
 import torch.optim as optim
 
-def Percentile(input, percentiles):
-    """
-    Find the percentiles of a tensor along the last dimension.
-    Adapted from https://github.com/aliutkus/torchpercentile/blob/master/torchpercentile/percentile.py
-    """
-    percentiles = percentiles.double()
-    in_sorted, in_argsort = torch.sort(input, dim=-1)
-    positions = percentiles * (input.shape[-1]-1) / 100
-    floored = torch.floor(positions)
-    ceiled = floored + 1
-    ceiled[ceiled > input.shape[-1] - 1] = input.shape[-1] - 1
-    weight_ceiled = positions-floored
-    weight_floored = 1.0 - weight_ceiled
-    d0 = in_sorted[..., floored.long()] * weight_floored
-    d1 = in_sorted[..., ceiled.long()] * weight_ceiled
-    result = d0+d1
-    return result
 
-
-def SlicedWassersteinDistanceG(x, pg, q, p, perdim=True):
-    if q is None:
-        px = torch.sort(x, dim=-1)[0]
-    else:
-        px = Percentile(x, q)
+def ObjectiveG(x, pg, p, w=None, perdim=True):
+    
+    px, indices = torch.sort(x, dim=-1)
+    if w is not None:
+        pg = Gaussian_ppf(x.shape[-1], weight=w[indices], device=w.device)
 
     if perdim:
         WD = torch.mean(torch.abs(px-pg) ** p)
@@ -33,13 +15,10 @@ def SlicedWassersteinDistanceG(x, pg, q, p, perdim=True):
     return WD
 
 
-def SlicedWassersteinDistance(x, x2, q, p, perdim=True):
-    if q is None:
-        px = torch.sort(x, dim=-1)[0]
-        px2 = torch.sort(x2, dim=-1)[0]
-    else:
-        px = Percentile(x, q)
-        px2 = Percentile(x2, q)
+def Objective(x, x2, p, perdim=True):
+
+    px = torch.sort(x, dim=-1)[0]
+    px2 = torch.sort(x2, dim=-1)[0]
 
     if perdim:
         WD = torch.mean(torch.abs(px-px2) ** p)
@@ -48,34 +27,31 @@ def SlicedWassersteinDistance(x, x2, q, p, perdim=True):
     return WD
 
 
-def SWD_prepare(Npercentile=100, device=torch.device("cuda:0"), gaussian=True):
-    start = 50 / Npercentile
-    end = 100-start
-    q = torch.linspace(start, end, Npercentile, device=device)
-    if gaussian:
-        pg = 2**0.5 * torch.erfinv(2*q/100-1)
-        return q, pg
+def Gaussian_ppf(Nsample, weight=None, device=torch.device("cuda:0")):
+    if weight is None:
+        start = 50 / Nsample
+        end = 100-start
+        q = torch.linspace(start, end, Nsample, device=device)
     else:
-        return q
+        w = weight / torch.sum(weight, dim=1).reshape(-1,1)
+        q = torch.cumsum(w, dim=1)
+        q = q - 0.5*w
+    pg = 2**0.5 * torch.erfinv(2*q/100-1)
+    return pg
 
 
-def noise_WD(ndata, threshold=0.5, Npercentile=None, N=100, p=2, device=torch.device("cuda:0")):
+def noise_WD(ndata, threshold=0.5, N=100, p=2, device=torch.device("cuda:0")):
 
-    #Npercentile: The number of points used to calculate Sliced Wasserstein Distance
     #N: The number of times to draw random samples
 
     assert threshold >= 0 and threshold <= 1
 
-    if Npercentile is None:
-        q, pg = SWD_prepare(ndata, device=device)
-        q = None
-    else:
-        q, pg = SWD_prepare(Npercentile, device=device)
+    pg = Gaussian_ppf(ndata, device=device)
 
     WD = torch.zeros(N, device=device)
     for i in range(N):
         x = torch.randn(ndata, device=device)
-        WD[i] = SlicedWassersteinDistanceG(x, pg, q, p) ** (1/p)
+        WD[i] = ObjectiveG(x, pg, p) ** (1/p)
 
     position = threshold * N
     floored = math.floor(position)
@@ -88,32 +64,28 @@ def noise_WD(ndata, threshold=0.5, Npercentile=None, N=100, p=2, device=torch.de
     return (WD[floored]*(position-floored) + WD[ceiled]*(1+floored-position)).item()
 
 
-def maxSWDdirection(x, x2='gaussian', n_component=None, maxiter=200, Npercentile=None, p=2, eps=1e-6, wi=None):
+def maxSWDdirection(x, x2='gaussian', weight=None, n_component=None, maxiter=200,  p=2, eps=1e-6, wi=None):
 
     #if x2 is None, find the direction of max sliced Wasserstein distance between x and gaussian
     #if x2 is not None, it needs to have the same shape as x
 
-    if x2 is not 'gaussian':
+    if x2 != 'gaussian':
         assert x.shape[1] == x2.shape[1]
+        assert weight is None
         if x2.shape[0] > x.shape[0]:
             x2 = x2[torch.randperm(x2.shape[0])][:x.shape[0]]
         elif x2.shape[0] < x.shape[0]:
             x = x[torch.randperm(x.shape[0])][:x2.shape[0]]
-    
+    elif weight is not None:
+        assert len(weight) == len(x)
+        pg = None
+    else:
+        pg = Gaussian_ppf(len(x), device=x.device)
+
     ndim = x.shape[1]
     if n_component is None:
         n_component = ndim
 
-    q = None
-    if x2 is 'gaussian':
-        if Npercentile is None:
-            q, pg = SWD_prepare(len(x), device=x.device)
-            q = None
-        else:
-            q, pg = SWD_prepare(Npercentile, device=x.device)
-    elif Npercentile is not None:
-        q = SWD_prepare(Npercentile, device=x.device, gaussian=False)
-    
     
     #initialize w. algorithm from https://arxiv.org/pdf/math-ph/0609050.pdf
     if wi is None:
@@ -135,10 +107,10 @@ def maxSWDdirection(x, x2='gaussian', n_component=None, maxiter=200, Npercentile
     w1 = w.clone()
     for i in range(maxiter):
         w.requires_grad_(True)
-        if x2 is 'gaussian':
-            loss = -SlicedWassersteinDistanceG(w @ x.T, pg, q, p)
+        if x2 == 'gaussian':
+            loss = -ObjectiveG(w @ x.T, pg, p, w=weight)
         else:
-            loss = -SlicedWassersteinDistance(w @ x.T, w @ x2.T, q, p)
+            loss = -Objective(w @ x.T, w @ x2.T, p)
         loss1 = loss
         GT = torch.autograd.grad(loss, w)[0]
         w.requires_grad_(False)
@@ -157,10 +129,10 @@ def maxSWDdirection(x, x2='gaussian', n_component=None, maxiter=200, Npercentile
                 else:
                     w1 = (w.double() @ (torch.eye(ndim, dtype=torch.double, device=x.device)-lr/2*WT.double()) @ torch.pinverse(torch.eye(ndim, dtype=torch.double, device=x.device)+lr/2*WT.double())).to(torch.get_default_dtype())
             
-                if x2 is 'gaussian':
-                    loss1 = -SlicedWassersteinDistanceG(w1 @ x.T, pg, q, p)
+                if x2 == 'gaussian':
+                    loss1 = -ObjectiveG(w1 @ x.T, pg, p, w=weight)
                 else:
-                    loss1 = -SlicedWassersteinDistance(w1 @ x.T, w1 @ x2.T, q, p)
+                    loss1 = -Objective(w1 @ x.T, w1 @ x2.T, p)
         
             if torch.max(torch.abs(w1-w)) < eps:
                 w = w1
@@ -169,36 +141,39 @@ def maxSWDdirection(x, x2='gaussian', n_component=None, maxiter=200, Npercentile
             lr *= up_fac
             w = w1
 
-    if x2 is 'gaussian':
-        WD = SlicedWassersteinDistanceG(w @ x.T, pg, q, p, perdim=False)
+    if x2 == 'gaussian':
+        WD = ObjectiveG(w @ x.T, pg, p, w=weight, perdim=False)
     else:
-        WD = SlicedWassersteinDistance(w @ x.T, w @ x2.T, q, p, perdim=False)
+        WD = Objective(w @ x.T, w @ x2.T, p, perdim=False)
     return w.T, WD**(1/p)
 
 
-def SlicedWasserstein(data, second='gaussian', Nslice=1000, p=2, batchsize=None):
+def SlicedWasserstein(data, second='gaussian', Nslice=1000, weight=None, p=2, batchsize=None):
 
     #Calculate the Sliced Wasserstein distance between the samples of two distribution. 
 
-    if second is not 'gaussian':
+    if second != 'gaussian':
         assert data.shape[1] == second.shape[1]
         if data.shape[0] < second.shape[0]:
             second = second[torch.randperm(second.shape[0])][:data.shape[0]]
         elif data.shape[0] > second.shape[0]:
             data = data[torch.randperm(data.shape[0])][:second.shape[0]]
+    elif weight is not None:
+        assert len(weight) == len(data)
+        pg = None
     else:
-        q, pg = SWD_prepare(len(data), device=data.device)
+        pg = Gaussian_ppf(len(data), device=data.device)
     Ndim = data.shape[1]
 
     if batchsize is None:
         direction = torch.randn(Ndim, Nslice).to(data.device)
         direction /= torch.sum(direction**2, dim=0)**0.5
         data0 = data @ direction
-        if second is 'gaussian':
-            SWD = SlicedWassersteinDistanceG(data0.T, pg, None, p, perdim=True)
+        if second == 'gaussian':
+            SWD = ObjectiveG(data0.T, pg, p, w=weight, perdim=True)
         else:
             second0 = second @ direction
-            SWD = SlicedWassersteinDistance(data0.T, second0.T, None, p, perdim=True)
+            SWD = Objective(data0.T, second0.T, p, perdim=True)
     else:
         i = 0
         SWD = torch.zeros(Nslice, device=data.device)
@@ -210,17 +185,17 @@ def SlicedWasserstein(data, second='gaussian', Nslice=1000, p=2, batchsize=None)
             direction /= torch.sum(direction**2, dim=0)**0.5
             data0 = data @ direction
             if second is 'gaussian':
-                SWD[i * batchsize: (i+1) * batchsize] = SlicedWassersteinDistanceG(data0.T, pg, None, p, perdim=False)
+                SWD[i * batchsize: (i+1) * batchsize] = ObjectiveG(data0.T, pg, p, w=weight, perdim=False)
             else:
                 second0 = second @ direction
-                SWD[i * batchsize: (i+1) * batchsize] = SlicedWassersteinDistance(data0.T, second0.T, None, p, perdim=False)
+                SWD[i * batchsize: (i+1) * batchsize] = Objective(data0.T, second0.T, p, perdim=False)
             i += 1
         SWD = torch.mean(SWD)
 
     return SWD ** (1/p)
 
 
-def SlicedWasserstein_direction(data, directions=None, second='gaussian', p=2, batchsize=None):
+def SlicedWasserstein_direction(data, directions=None, second='gaussian', weight=None, p=2, batchsize=None):
 
     #calculate the Wasserstein distance of 1D slices on given directions
 
@@ -241,22 +216,26 @@ def SlicedWasserstein_direction(data, directions=None, second='gaussian', p=2, b
             data0 = data0[torch.randperm(data0.shape[0])[:second0.shape[0]]]
 
         if batchsize is None:
-            SWD = SlicedWassersteinDistance(data0.T, second0.T, None, p, perdim=False)
+            SWD = Objective(data0.T, second0.T, p, perdim=False)
         else:
             SWD = torch.zeros(data0.shape[1], device=data0.device) 
             i = 0
             while i * batchsize < data0.shape[1]:        
-                SWD[i * batchsize: (i+1) * batchsize] = SlicedWassersteinDistance(data0[:, i*batchsize: (i+1)*batchsize].T, second0[:, i*batchsize: (i+1)*batchsize].T, None, p, perdim=False)
+                SWD[i * batchsize: (i+1) * batchsize] = Objective(data0[:, i*batchsize: (i+1)*batchsize].T, second0[:, i*batchsize: (i+1)*batchsize].T, p, perdim=False)
                 i += 1
     else:
-        q, pg = SWD_prepare(len(data), device=data.device)
+        if weight is not None:
+            assert len(weight) == len(data)
+            pg = None
+        else:
+            pg = Gaussian_ppf(len(data), device=data.device)
         if batchsize is None:
-            SWD = SlicedWassersteinDistanceG(data0.T, pg, None, p, perdim=False)
+            SWD = ObjectiveG(data0.T, pg, p, w=weight, perdim=False)
         else:
             SWD = torch.zeros(data0.shape[1], device=data0.device) 
             i = 0
             while i * batchsize < data0.shape[1]:        
-                SWD[i * batchsize: (i+1) * batchsize] = SlicedWassersteinDistanceG(data0[:, i*batchsize: (i+1)*batchsize].T, pg, None, p, perdim=False)
+                SWD[i * batchsize: (i+1) * batchsize] = ObjectiveG(data0[:, i*batchsize: (i+1)*batchsize].T, pg, p, w=weight, perdim=False)
                 i += 1
 
     return SWD ** (1/p)
