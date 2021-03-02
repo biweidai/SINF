@@ -445,6 +445,12 @@ class SlicedTransport(nn.Module):
             data = data[order].to(self.wT.device)
             if weight is not None:
                 weight = weight[order].to(self.wT.device)
+        if weight is not None:
+            weight = weight / torch.sum(weight)
+            select = weight > 0
+            data = data[select]
+            weight = weight[select]
+
         wT, SWD = maxSWDdirection(data, x2=sample, weight=weight, n_component=self.n_component, maxiter=MSWD_max_iter, p=MSWD_p)
         with torch.no_grad():
             SWD, indices = torch.sort(SWD, descending=True)
@@ -478,6 +484,10 @@ class SlicedTransport(nn.Module):
             data0 = (data @ self.wT.to(data.device)).to(self.wT.device)
             if weight is not None:
                 weight = weight.to(self.wT.device)
+                weight = weight / torch.sum(weight)
+                select = weight > 0
+                data0 = data0[select]
+                weight = weight[select]
 
             #build rational quadratic spline transform
             x, y, deriv = estimate_knots_gaussian(data0, interp_nbin=self.interp_nbin, above_noise=above_noise, weight=weight, edge_bins=edge_bins, 

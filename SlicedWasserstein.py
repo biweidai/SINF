@@ -33,9 +33,8 @@ def Gaussian_ppf(Nsample, weight=None, device=torch.device("cuda:0")):
         end = 100-start
         q = torch.linspace(start, end, Nsample, device=device)
     else:
-        w = weight / torch.sum(weight, dim=1).reshape(-1,1)
-        q = torch.cumsum(w, dim=1)
-        q = q - 0.5*w
+        q = torch.cumsum(weight, dim=1)
+        q = q - 0.5*weight
     pg = 2**0.5 * torch.erfinv(2*q/100-1)
     return pg
 
@@ -79,6 +78,7 @@ def maxSWDdirection(x, x2='gaussian', weight=None, n_component=None, maxiter=200
     elif weight is not None:
         assert len(weight) == len(x)
         pg = None
+        weight = weight / torch.sum(weight)
     else:
         pg = Gaussian_ppf(len(x), device=x.device)
 

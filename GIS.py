@@ -3,30 +3,34 @@ from load_data import *
 import argparse
 
 def GIS(data_train, data_validate=None, iteration=None, weight_train=None, weight_validate=None, n_component=None, interp_nbin=None, KDE=True, bw_factor=0.5, alpha=None, edge_bins=None, 
-        ndata_wT=None, MSWD_max_iter=None, logit=False, Whiten=False, batchsize=None, nocuda=False, patch=False, shape=[28,28,1], verbose=True):
+        ndata_wT=None, MSWD_max_iter=None, NBfirstlayer=False, logit=False, Whiten=False, batchsize=None, nocuda=False, patch=False, shape=[28,28,1], verbose=True):
     
     assert data_validate is not None or iteration is not None
  
     #hyperparameters
     ndim = data_train.shape[1]
+    if weight_train is None:
+        ndata = len(data_train)
+    else:
+        ndata = (torch.sum(weight_train)**2 / torch.sum(weight_train**2)).item()
     if interp_nbin is None:
-        interp_nbin = min(200, int(len(data_train)**0.5))
+        interp_nbin = min(200, int(ndata**0.5))
     if alpha is None:
-        alpha = (1-0.02*math.log10(len(data_train)), 1-0.001*math.log10(len(data_train)))
+        alpha = (1-0.02*math.log10(ndata), 1-0.001*math.log10(ndata))
     if edge_bins is None:
-        edge_bins = round(math.log10(len(data_train)))-1
+        edge_bins = int(math.log10(ndata))-1
     if batchsize is None:
         batchsize = len(data_train)
     if not patch:
         if n_component is None:
-            if ndim <= 8 or len(data_train) / float(ndim) < 20:
+            if ndim <= 8 or ndata / float(ndim) < 20:
                 n_component = ndim
             else:
                 n_component = 8
         if ndata_wT is None:
             ndata_wT = min(len(data_train), int(math.log10(ndim)*1e5))
         if MSWD_max_iter is None:
-            MSWD_max_iter = min(len(data_train) // ndim, 200)
+            MSWD_max_iter = min(round(ndata) // ndim, 200)
     else:
         assert shape[0] > 4 and shape[1] > 4
         n_component0 = n_component
@@ -109,6 +113,7 @@ def GIS(data_train, data_validate=None, iteration=None, weight_train=None, weigh
             else:
                 print('After whiten logp:', logp_train)
 
+
     #GIS iterations
     while True:
         t = time.time()
@@ -139,10 +144,17 @@ def GIS(data_train, data_validate=None, iteration=None, weight_train=None, weigh
             layer = PatchSlicedTransport(shape=shape, kernel_size=kernel, shift=shift, n_component=n_component, interp_nbin=interp_nbin).requires_grad_(False).to(device)
         else:
             #regular GIS layer
-            layer = SlicedTransport(ndim=ndim, n_component=n_component, interp_nbin=interp_nbin).requires_grad_(False).to(device)
+            if NBfirstlayer:
+                layer = SlicedTransport(ndim=ndim, n_component=ndim, interp_nbin=interp_nbin).requires_grad_(False).to(device)
+            else:
+                layer = SlicedTransport(ndim=ndim, n_component=n_component, interp_nbin=interp_nbin).requires_grad_(False).to(device)
         
         #fit the layer
-        layer.fit_wT(data=data_train, weight=weight_train, ndata_wT=ndata_wT, MSWD_max_iter=MSWD_max_iter, verbose=verbose)
+        if NBfirstlayer:
+            layer.wT[:] = torch.eye(ndim).to(device)
+            NBfirstlayer = False
+        else:
+            layer.fit_wT(data=data_train, weight=weight_train, ndata_wT=ndata_wT, MSWD_max_iter=MSWD_max_iter, verbose=verbose)
 
         layer.fit_spline(data=data_train, weight=weight_train, edge_bins=edge_bins, alpha=alpha, KDE=KDE, bw_factor=bw_factor, batchsize=batchsize, verbose=verbose)
 
