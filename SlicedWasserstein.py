@@ -184,7 +184,7 @@ def SlicedWasserstein(data, second='gaussian', Nslice=1000, weight=None, p=2, ba
                 direction = torch.randn(Ndim, Nslice-i*batchsize).to(data.device)
             direction /= torch.sum(direction**2, dim=0)**0.5
             data0 = data @ direction
-            if second is 'gaussian':
+            if second == 'gaussian':
                 SWD[i * batchsize: (i+1) * batchsize] = ObjectiveG(data0.T, pg, p, w=weight, perdim=False)
             else:
                 second0 = second @ direction
@@ -203,7 +203,7 @@ def SlicedWasserstein_direction(data, directions=None, second='gaussian', weight
         data0 = data
     else:
         data0 = data @ directions
-    if second is not 'gaussian':
+    if second != 'gaussian':
         assert data.shape[1] == second.shape[1]
 
         second0 = second

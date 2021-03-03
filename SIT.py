@@ -545,9 +545,9 @@ class SlicedTransport(nn.Module):
 
         data0 = data @ self.wT
         remaining = data - data0 @ self.wT.T
-        if mode is 'forward':
+        if mode == 'forward':
             data0, logj = self.transform1D(data0)
-        elif mode is 'inverse':
+        elif mode == 'inverse':
             data0, logj = self.transform1D.inverse(data0)
             if d_dz is not None:
                 d_dz0 = torch.einsum('ijk,jl->ilk', d_dz, self.wT)
@@ -672,7 +672,7 @@ class PatchSlicedTransport(nn.Module):
             data0 = data[:, dim0].to(device)
         else:
             data0 = data[torch.randperm(len(data), device=data.device)[:ndata_wT]][:, dim0].to(device)
-        if sample is 'gaussian':
+        if sample == 'gaussian':
             sample0 = 'gaussian'
         elif ndata_wT == len(sample):
             sample0 = sample[:, dim0].to(device)
@@ -829,9 +829,9 @@ class PatchSlicedTransport(nn.Module):
 
         data0 = data @ wT
         remaining = data - data0 @ wT.T
-        if mode is 'forward':
+        if mode == 'forward':
             data0, logj = self.transform1D(data0)
-        elif mode is 'inverse':
+        elif mode == 'inverse':
             data0, logj = self.transform1D.inverse(data0)
             if d_dz is not None:
                 d_dz0 = torch.einsum('ijk,jl->ilk', d_dz, wT)
@@ -969,12 +969,12 @@ class ConditionalSlicedTransport_discrete(nn.Module):
         remaining = data - data0 @ self.wT.T
         logj = torch.zeros(len(data), device=data.device)
         data1 = torch.zeros_like(data0)
-        if mode is 'forward':
+        if mode == 'forward':
             for binid in range(self.n_class):
                 select = label == binid
                 data1[select], logj1 = self.transform1D[binid](data0[select])
                 logj[select] = torch.sum(logj1, dim=1)
-        elif mode is 'inverse':
+        elif mode == 'inverse':
             for binid in range(self.n_class):
                 select = label == binid
                 data1[select], logj1 = self.transform1D[binid].inverse(data0[select])
@@ -1068,7 +1068,7 @@ class ConditionalPatchSlicedTransport_discrete(nn.Module):
                         dim0 = dim[h*self.kernel[0]:(h+1)*self.kernel[0], w*self.kernel[1]:(w+1)*self.kernel[1], c].reshape(-1)
                     index = h*self.Nkernel_W*self.Nkernel_C + w*self.Nkernel_C + c
                     data0 = data[:, dim0]
-                    if sample is 'gaussian':
+                    if sample == 'gaussian':
                         sample0 = 'gaussian'
                     else:
                         sample0 = sample[:, dim0]
@@ -1181,12 +1181,12 @@ class ConditionalPatchSlicedTransport_discrete(nn.Module):
         remaining = data - data0 @ wT.T
         logj = torch.zeros(len(data), device=data.device)
         data1 = torch.zeros_like(data0)
-        if mode is 'forward':
+        if mode == 'forward':
             for binid in range(self.n_class):
                 select = label == binid
                 data1[select], logj1 = self.transform1D[binid](data0[select])
                 logj[select] = torch.sum(logj1, dim=1)
-        elif mode is 'inverse':
+        elif mode == 'inverse':
             for binid in range(self.n_class):
                 select = label == binid
                 data1[select], logj1 = self.transform1D[binid].inverse(data0[select])
