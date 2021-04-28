@@ -377,17 +377,17 @@ if __name__ == "__main__":
                     torch.save(model, args.save)
                     if args.put_data_on_disk:
                         os.system('cp ' + sample + ' ' + args.save + '_sample_train.npy')
-                        os.system('cp ' + sample_test + ' ' + args.save + '_sample_test.npy')
                     else:
                         np.save(args.save + '_sample_train.npy', sample.numpy())
-                        np.save(args.save + '_sample_test.npy', sample_test.numpy())
                     if args.evaluateFID:
                         if args.put_data_on_disk:
                             sample_test1 = toimage(torch.tensor(np.load(sample_test)), shape)
                             FID.append(evaluate_fid_score(sample_test1.astype(np.float32)/255., np.load(data_test)[:10000].astype(np.float32)/255.))
+                            os.system('cp ' + sample_test + ' ' + args.save + '_sample_test.npy')
                         else:  
                             sample_test1 = toimage(sample_test, shape)
                             FID.append(evaluate_fid_score(sample_test1.astype(np.float32)/255., data_test.astype(np.float32)/255.))
+                            np.save(args.save + '_sample_test.npy', sample_test.numpy())
                         print('Current FID score:', FID[-1])
                         del sample_test1
         
