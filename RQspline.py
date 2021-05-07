@@ -402,7 +402,7 @@ def estimate_knots_gaussian(data, interp_nbin, above_noise, weight=None, edge_bi
                         endy1 = 2**0.5 * torch.erfinv(2*torch.linspace(0.5,len(endx1)-0.5,len(endx1),device=data.device,dtype=torch.float64)/len(data)-1).to(torch.get_default_dtype()) - y[i,0]
                         endy2 = 2**0.5 * torch.erfinv(2*(1-torch.linspace(0.5,len(endx2)-0.5,len(endx2),device=data.device,dtype=torch.float64)/len(data))-1).to(torch.get_default_dtype()) - y[i,-1]
                     endx1 -= x[i,0]
-                    select1 = torch.isfinite(endy1) & (endy1>0) & (endx1>0)
+                    select1 = torch.isfinite(endy1) & (endy1<0) & (endx1<0)
                     deriv[i,0] = torch.sum(endx1[select1]*endy1[select1]) / torch.sum(endx1[select1]*endx1[select1])
                     endx2 -= x[i,-1]
                     select2 = torch.isfinite(endy2) & (endy2>0) & (endx2>0)
