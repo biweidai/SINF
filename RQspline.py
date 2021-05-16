@@ -318,7 +318,7 @@ class RQspline(nn.Module):
         return x, logderiv
 
 
-def estimate_knots_gaussian(data, interp_nbin, above_noise, weight=None, edge_bins=0, derivclip=None, extrapolate='regression', alpha=(0.9, 0.99), KDE=True, bw_factor=1, random_knot=False, batchsize=None):
+def estimate_knots_gaussian(data, interp_nbin, above_noise, weight=None, edge_bins=0, derivclip=None, extrapolate='regression', alpha=(0.9, 0.99), KDE=True, bw_factor=1, batchsize=None):
 
     if not KDE and weight is not None:
         raise NotImplementedError
@@ -347,9 +347,7 @@ def estimate_knots_gaussian(data, interp_nbin, above_noise, weight=None, edge_bi
             if KDE:
                 rho = kde(data[:,i], bw_factor=bw_factor, weights=weight, batchsize=batchsize)
                 scale = (rho.covariance[0,0]+1)**0.5
-                if random_nknot:
-                    x[i] = torch.rand(interp_nbin, device=x.device)*(torch.max(data[:,i])-torch.min(data[:,i])+4*scale) + torch.min(data[:,i]) - 2*scale
-                elif weight is not None:
+                if weight is not None:
                     x[i] = quantile_weights(data[:,i], q, weight, scale)
                 else:
                     x[i] = quantile_weights(data[:,i], q, torch.ones(data.shape[1], device=data.device), scale)
@@ -370,9 +368,7 @@ def estimate_knots_gaussian(data, interp_nbin, above_noise, weight=None, edge_bi
                     dx = x[i,1:] - x[i,:-1]
             else:
                 scale = eps
-                if random_nknot:
-                    x[i] = torch.rand(interp_nbin, device=x.device)*(torch.max(data[:,i])-torch.min(data[:,i])+4*scale) + torch.min(data[:,i]) - 2*scale
-                elif weight is not None:
+                if weight is not None:
                     x[i] = quantile_weights(data[:,i], q, weight, scale)
                 else:
                     x[i] = quantile_weights(data[:,i], q, torch.ones(data.shape[1], device=data.device), scale)
