@@ -463,7 +463,7 @@ class SlicedTransport(nn.Module):
         return self 
 
 
-    def fit_spline(self, data, weight=None, edge_bins=0, derivclip=None, extrapolate='regression', alpha=(0.9,0.99), noise_threshold=0, MSWD_p=2, KDE=True, bw_factor=1, batchsize=None, verbose=True):
+    def fit_spline(self, data, weight=None, edge_bins=0, derivclip=None, extrapolate='regression', alpha=(0.9,0.99), noise_threshold=0, MSWD_p=2, KDE=True, bw_factor=1, random_nknot=False, batchsize=None, verbose=True):
 
         #fit the 1D transform \Psi
 
@@ -490,8 +490,8 @@ class SlicedTransport(nn.Module):
                 weight = weight[select]
 
             #build rational quadratic spline transform
-            x, y, deriv = estimate_knots_gaussian(data0, interp_nbin=self.interp_nbin, above_noise=above_noise, weight=weight, edge_bins=edge_bins, 
-                                                  derivclip=derivclip, extrapolate=extrapolate, alpha=alpha, KDE=KDE, bw_factor=bw_factor, batchsize=batchsize)
+            x, y, deriv = estimate_knots_gaussian(data0, interp_nbin=self.interp_nbin, above_noise=above_noise, weight=weight, edge_bins=edge_bins, derivclip=derivclip, 
+                                                  extrapolate=extrapolate, alpha=alpha, KDE=KDE, bw_factor=bw_factor, random_nknot=random_nknot, batchsize=batchsize)
             self.transform1D.set_param(x, y, deriv)
 
             if verbose:
@@ -751,7 +751,7 @@ class PatchSlicedTransport(nn.Module):
         return wT
 
 
-    def fit_spline(self, data, edge_bins=0, derivclip=None, extrapolate='regression', alpha=(0.9,0.99), noise_threshold=0, KDE=True, bw_factor=1, batchsize=None, verbose=True):
+    def fit_spline(self, data, edge_bins=0, derivclip=None, extrapolate='regression', alpha=(0.9,0.99), noise_threshold=0, KDE=True, bw_factor=1, random_nknot=False, batchsize=None, verbose=True):
 
         assert extrapolate in ['endpoint', 'regression']
         assert self.interp_nbin > 2 * edge_bins
@@ -772,8 +772,8 @@ class PatchSlicedTransport(nn.Module):
             data0 = (data @ wT).to(self.wT.device)
 
             #build rational quadratic spline transform
-            x, y, deriv = estimate_knots_gaussian(data0, interp_nbin=self.interp_nbin, above_noise=above_noise, edge_bins=edge_bins, 
-                                                  derivclip=derivclip, extrapolate=extrapolate, alpha=alpha, KDE=KDE, bw_factor=bw_factor, batchsize=batchsize)
+            x, y, deriv = estimate_knots_gaussian(data0, interp_nbin=self.interp_nbin, above_noise=above_noise, edge_bins=edge_bins, derivclip=derivclip, 
+                                                  extrapolate=extrapolate, alpha=alpha, KDE=KDE, bw_factor=bw_factor, random_nknot=random_nknot, batchsize=batchsize)
             self.transform1D.set_param(x, y, deriv)
 
             if verbose:
