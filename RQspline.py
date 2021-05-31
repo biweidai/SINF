@@ -137,6 +137,52 @@ class kde(object):
 
     __call__ = pdf
 
+    def pdf_derivative(self, x):
+        """Evaluate the derivative of the estimated pdf on a set of points.
+        
+        Parameters
+        ----------
+        x : (# of dimensions, # of points)-array
+            Alternatively, a (# of dimensions,) vector can be passed in and
+            treated as a single point.
+        
+        Returns
+        -------
+        values : (# of points,)-array
+            The values at each point.
+        
+        Raises
+        ------
+        ValueError
+            If the dimensionality of the input points is different than
+            the dimensionality of the KDE.
+        
+        """
+        if self.batchsize is not None:
+            result = torch.zeros_like(x)
+            i = 0
+            while i * self.batchsize < self.n:
+
+                diff = self._diff(x, self.dataset[i*self.batchsize: (i+1)*self.batchsize])
+                inv_cov_x = torch.einsum("ij,lmj->lmi", self.inv_cov, diff)
+                energy = torch.sum(diff * inv_cov_x, dim=2) / 2.
+                if self.weights is None:
+                    result += torch.sum(-inv_cov_x * torch.exp(-energy)[:,:,None], dim=0) / self._norm_factor / self.n
+                else:
+                    result += torch.sum(-(self.weights * torch.exp(-energy))[:,:,None] * inv_cov_x, dim=0) / self._norm_factor
+
+                i += 1
+        else:
+            diff = self._diff(x, self.dataset)
+            inv_cov_x = torch.einsum("ij,lmj->lmi", self.inv_cov, diff)
+            energy = torch.sum(diff * inv_cov_x, dim=2) / 2.
+            if self.weights is None:
+                result = torch.sum(-inv_cov_x * torch.exp(-energy)[:,:,None], dim=0) / self._norm_factor / self.n
+            else:
+                result = torch.sum(-(self.weights * torch.exp(-energy))[:,:,None] * inv_cov_x, dim=0) / self._norm_factor
+
+        return result
+
     def cdf(self, x):
         """Evaluate the estimated cdf on a set of 1-d points.
         
@@ -350,7 +396,7 @@ def estimate_knots_gaussian(data, interp_nbin, above_noise, weight=None, edge_bi
                 if weight is not None:
                     x[i] = quantile_weights(data[:,i], q, weight, scale)
                 else:
-                    x[i] = quantile_weights(data[:,i], q, torch.ones(data.shape[1], device=data.device), scale)
+                    x[i] = quantile_weights(data[:,i], q, torch.ones(len(data), device=data.device), scale)
 
                 y[i] = 2**0.5 * scale * torch.erfinv(2*rho.cdf(x[i]).double()-1).to(torch.get_default_dtype())
                 dy = y[i,1:] - y[i,:-1]
@@ -371,7 +417,7 @@ def estimate_knots_gaussian(data, interp_nbin, above_noise, weight=None, edge_bi
                 if weight is not None:
                     x[i] = quantile_weights(data[:,i], q, weight, scale)
                 else:
-                    x[i] = quantile_weights(data[:,i], q, torch.ones(data.shape[1], device=data.device), scale)
+                    x[i] = quantile_weights(data[:,i], q, torch.ones(len(data), device=data.device), scale)
                 y[i] = 2**0.5 * torch.erfinv(2*q.double()-1).to(torch.get_default_dtype())
                 dy = y[i,1:] - y[i,:-1]
                 dx = x[i,1:] - x[i,:-1]
@@ -384,7 +430,7 @@ def estimate_knots_gaussian(data, interp_nbin, above_noise, weight=None, edge_bi
                     select += ~torch.isfinite(y[i])
                     q0[select] = torch.rand(torch.sum(select).item(), device=q.device)
                     q0 = torch.sort(q0)[0]
-                    x[i] = quantile_weights(data[:,i], q0, torch.ones(data.shape[1], device=data.device), scale)
+                    x[i] = quantile_weights(data[:,i], q0, torch.ones(len(data), device=data.device), scale)
                     y[i] = 2**0.5 * torch.erfinv(2*q0.double()-1).to(torch.get_default_dtype())
                     dy = y[i,1:] - y[i,:-1]
                     dx = x[i,1:] - x[i,:-1]
