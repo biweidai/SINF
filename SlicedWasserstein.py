@@ -72,7 +72,7 @@ def noise_WD(ndata, threshold=0.5, N=100, p=2, device=torch.device("cuda:0")):
     return (WD[floored]*(position-floored) + WD[ceiled]*(1+floored-position)).item()
 
 
-def maxSWDdirection(x, x2='gaussian', weight=None, n_component=None, maxiter=200,  p=2, eps=1e-6, wi=None):
+def maxKSWDdirection(x, x2='gaussian', weight=None, K=None, maxiter=200,  p=2, eps=1e-6, ATi=None):
 
     #if x2 is None, find the direction of max sliced Wasserstein distance between x and gaussian
     #if x2 is not None, it needs to have the same shape as x
@@ -92,18 +92,18 @@ def maxSWDdirection(x, x2='gaussian', weight=None, n_component=None, maxiter=200
         pg = Gaussian_ppf(len(x), device=x.device)
 
     ndim = x.shape[1]
-    if n_component is None:
-        n_component = ndim
+    if K is None:
+        K = ndim
 
     
-    #initialize w. algorithm from https://arxiv.org/pdf/math-ph/0609050.pdf
-    if wi is None:
-        wi = torch.randn(ndim, n_component, device=x.device)
+    #initialize A. algorithm from https://arxiv.org/pdf/math-ph/0609050.pdf
+    if ATi is None:
+        ATi = torch.randn(ndim, K, device=x.device)
     else:
-        assert wi.shape[0] == ndim and wi.shape[1] == n_component
-    Q, R = torch.qr(wi)
+        assert ATi.shape[0] == ndim and ATi.shape[1] == K 
+    Q, R = torch.qr(ATi)
     L = torch.sign(torch.diag(R))
-    w = (Q * L).T
+    AT = (Q * L).T
 
     lr = 0.1
     down_fac = 0.5
@@ -111,50 +111,50 @@ def maxSWDdirection(x, x2='gaussian', weight=None, n_component=None, maxiter=200
     c = 0.5
     
     #algorithm from http://noodle.med.yale.edu/~hdtag/notes/steifel_notes.pdf
-    #note that here w = X.T
+    #note that here A = X
     #use backtracking line search
-    w1 = w.clone()
+    AT1 = AT.clone()
     for i in range(maxiter):
-        w.requires_grad_(True)
+        AT.requires_grad_(True)
         if x2 == 'gaussian':
-            loss = -ObjectiveG(w @ x.T, pg, p, w=weight)
+            loss = -ObjectiveG(AT @ x.T, pg, p, w=weight)
         else:
-            loss = -Objective(w @ x.T, w @ x2.T, p)
+            loss = -Objective(AT @ x.T, AT @ x2.T, p)
         loss1 = loss
-        GT = torch.autograd.grad(loss, w)[0]
-        w.requires_grad_(False)
+        GT = torch.autograd.grad(loss, AT)[0]
+        AT.requires_grad_(False)
         with torch.no_grad():
-            WT = w.T @ GT - GT.T @ w
-            e = - w @ WT #dw/dlr
+            BT = AT.T @ GT - GT.T @ AT
+            e = - AT @ BT #dw/dlr
             m = torch.sum(GT * e) #dloss/dlr
 
             lr /= down_fac
             while loss1 > loss + c*m*lr:
                 lr *= down_fac
-                if 2*n_component < ndim:
-                    UT = torch.cat((GT, w), dim=0).double()
-                    V = torch.cat((w.T, -GT.T), dim=1).double()
-                    w1 = (w.double() - lr * w.double() @ V @ torch.pinverse(torch.eye(2*n_component, dtype=torch.double, device=x.device)+lr/2*UT@V) @ UT).to(torch.get_default_dtype())
+                if 2*K < ndim:
+                    UT = torch.cat((GT, AT), dim=0).double()
+                    V = torch.cat((AT.T, -GT.T), dim=1).double()
+                    AT1 = (AT.double() - lr * AT.double() @ V @ torch.pinverse(torch.eye(2*K, dtype=torch.double, device=x.device)+lr/2*UT@V) @ UT).to(torch.get_default_dtype())
                 else:
-                    w1 = (w.double() @ (torch.eye(ndim, dtype=torch.double, device=x.device)-lr/2*WT.double()) @ torch.pinverse(torch.eye(ndim, dtype=torch.double, device=x.device)+lr/2*WT.double())).to(torch.get_default_dtype())
+                    AT1 = (AT.double() @ (torch.eye(ndim, dtype=torch.double, device=x.device)-lr/2*BT.double()) @ torch.pinverse(torch.eye(ndim, dtype=torch.double, device=x.device)+lr/2*BT.double())).to(torch.get_default_dtype())
             
                 if x2 == 'gaussian':
-                    loss1 = -ObjectiveG(w1 @ x.T, pg, p, w=weight)
+                    loss1 = -ObjectiveG(AT1 @ x.T, pg, p, w=weight)
                 else:
-                    loss1 = -Objective(w1 @ x.T, w1 @ x2.T, p)
+                    loss1 = -Objective(AT1 @ x.T, AT1 @ x2.T, p)
         
-            if torch.max(torch.abs(w1-w)) < eps:
-                w = w1
+            if torch.max(torch.abs(AT1-AT)) < eps:
+                AT = AT1
                 break
         
             lr *= up_fac
-            w = w1
+            AT = AT1
 
     if x2 == 'gaussian':
-        WD = ObjectiveG(w @ x.T, pg, p, w=weight, perdim=False)
+        WD = ObjectiveG(AT @ x.T, pg, p, w=weight, perdim=False)
     else:
-        WD = Objective(w @ x.T, w @ x2.T, p, perdim=False)
-    return w.T, WD**(1/p)
+        WD = Objective(AT @ x.T, AT @ x2.T, p, perdim=False)
+    return AT.T, WD**(1/p)
 
 
 def SlicedWasserstein(data, second='gaussian', Nslice=1000, weight=None, p=2, batchsize=None):
@@ -308,25 +308,25 @@ class Stiefel_SGD(optim.Optimizer):
                 dtype = p.data.dtype
                 if p.data.ndim == 2: 
                     n_dim = p.data.shape[0]
-                    n_component = p.data.shape[1]
+                    K = p.data.shape[1]
 
-                    if 2*n_component < n_dim:
+                    if 2*K < n_dim:
                         U = torch.cat((G, X), dim=1)
                         VT = torch.cat((X.T, -G.T), dim=0)
-                        #p.data.add_(-group['lr'], (U@torch.pinverse(torch.eye(2*n_component, dtype=torch.double, device=X.device)+group['lr']/2.*VT@U)@VT@X).type(dtype))
-                        p.data = (X - group['lr'] * U@torch.pinverse(torch.eye(2*n_component, dtype=torch.double, device=X.device)+group['lr']/2.*VT@U)@VT@X).type(dtype)
+                        #p.data.add_(-group['lr'], (U@torch.pinverse(torch.eye(2*K, dtype=torch.double, device=X.device)+group['lr']/2.*VT@U)@VT@X).type(dtype))
+                        p.data = (X - group['lr'] * U@torch.pinverse(torch.eye(2*K, dtype=torch.double, device=X.device)+group['lr']/2.*VT@U)@VT@X).type(dtype)
                     else:
                         A = G@X.T - X@G.T
                         p.data = (torch.pinverse(torch.eye(n_dim, dtype=torch.double, device=X.device)+group['lr']/2*A) @ (torch.eye(n_dim, dtype=torch.double, device=X.device)-group['lr']/2*A) @ X).type(dtype)
                 elif p.data.ndim == 3:
                     n_dim = p.data.shape[1]
-                    n_component = p.data.shape[2]
+                    K = p.data.shape[2]
 
-                    if 2*n_component < n_dim:
+                    if 2*K < n_dim:
                         for i in range(len(p.data)):
                             U = torch.cat((G[i], X[i]), dim=1)
                             VT = torch.cat((X[i].T, -G[i].T), dim=0)
-                            p.data[i] = (X[i] - group['lr'] * U@torch.pinverse(torch.eye(2*n_component, dtype=torch.double, device=X.device)+group['lr']/2.*VT@U)@VT@X[i]).type(dtype)
+                            p.data[i] = (X[i] - group['lr'] * U@torch.pinverse(torch.eye(2*K, dtype=torch.double, device=X.device)+group['lr']/2.*VT@U)@VT@X[i]).type(dtype)
                     else:
                         for i in range(len(p.data)):
                             A = G[i]@X[i].T - X[i]@G[i].T

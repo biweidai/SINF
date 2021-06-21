@@ -1,4 +1,4 @@
-from SIT import *
+from SINF import *
 from load_data import * 
 import argparse
 import time
@@ -20,7 +20,7 @@ def toimage(sample, shape):
     return sample
 
 
-def add_one_layer_inverse(model, data, sample, n_component, nsample_wT, nsample, layer_type='regular', shape=None, kernel=None, shift=None, interp_nbin=400, MSWD_max_iter=200, edge_bins=10, derivclip=1, extrapolate='regression', alpha=(0., 0.), noise_threshold=0, KDE=False, bw_factor_data=1, bw_factor_sample=1, batchsize=None, verbose=True, sample_test=None, put_data_on_disk=False, pool=None):
+def add_one_layer_inverse(model, data, sample, K, nsample_A, nsample, layer_type='regular', shape=None, kernel=None, shift=None, M=400, MSWD_max_iter=200, edge_bins=10, derivclip=1, extrapolate='regression', alpha=(0., 0.), noise_threshold=0, KDE=False, b_factor_data=1, b_factor_sample=1, batchsize=None, verbose=True, sample_test=None, put_data_on_disk=False, pool=None):
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -61,14 +61,14 @@ def add_one_layer_inverse(model, data, sample, n_component, nsample_wT, nsample,
             data1 = data[:nsample]
         else:
             data1 = data
-    print(time.time()-t, '1')
+    #print(time.time()-t, '1')
 
     if layer_type == 'regular':
-        layer = SlicedTransport(ndim=model.ndim, n_component=n_component, interp_nbin=interp_nbin).requires_grad_(False).to(device)
+        layer = SlicedTransport(ndim=model.ndim, K=K, M=M).requires_grad_(False).to(device)
     elif layer_type == 'patch':
-        layer = PatchSlicedTransport(shape=shape, kernel=kernel, shift=shift, n_component=n_component, interp_nbin=interp_nbin).requires_grad_(False).to(device)
+        layer = PatchSlicedTransport(shape=shape, kernel=kernel, shift=shift, K=K, M=M).requires_grad_(False).to(device)
 
-    layer.fit_wT(data1, sample=sample1, ndata_wT=nsample_wT, MSWD_max_iter=MSWD_max_iter, pool=pool, verbose=verbose)
+    layer.fit_A(data1, sample=sample1, ndata_A=nsample_A, MSWD_max_iter=MSWD_max_iter, pool=pool, verbose=verbose)
 
     del data1, sample1
 
@@ -87,10 +87,10 @@ def add_one_layer_inverse(model, data, sample, n_component, nsample_wT, nsample,
             data1 = data[-nsample:]
         else:
             data1 = data
-    print(time.time()-t, '2')
+    #print(time.time()-t, '2')
 
     success = layer.fit_spline_inverse(data1, sample1, edge_bins=edge_bins, derivclip=derivclip, extrapolate=extrapolate, alpha=alpha, noise_threshold=noise_threshold,
-                                       KDE=KDE, bw_factor_data=bw_factor_data, bw_factor_sample=bw_factor_sample, batchsize=batchsize, verbose=verbose)
+                                       KDE=KDE, b_factor_data=b_factor_data, b_factor_sample=b_factor_sample, batchsize=batchsize, verbose=verbose)
 
     del data1, sample1
     if put_data_on_disk:
@@ -130,7 +130,7 @@ def add_one_layer_inverse(model, data, sample, n_component, nsample_wT, nsample,
                     sample_test = transform_batch_layer(layer, sample_test, batchsize, direction='inverse', pool=pool)[0]
 
         model.add_layer(layer.cpu(), position=0)
-    print(time.time()-t, '3')
+    #print(time.time()-t, '3')
     if verbose:
         t = end_timing(tstart)
         print ('Nlayer:', len(model.layer), 'Time:', t, layer_type)
@@ -215,10 +215,10 @@ if __name__ == "__main__":
         batchsize = 5000 
     
     if args.dataset in ['mnist', 'fmnist', 'cifar10']:
-        nsample_wT = len(data_train) 
+        nsample_A = len(data_train) 
         nsample = 6*len(data_train)
     elif args.dataset == 'celeba':
-        nsample_wT = 40000 
+        nsample_A = 40000 
         nsample = 100000 
     
     if args.put_data_on_disk:
@@ -247,7 +247,7 @@ if __name__ == "__main__":
         model = torch.load(args.restore) 
         print('Successfully load in the model. Time:', time.time()-t_total)
     else:
-        model = SIT(ndim=ndim).requires_grad_(False)
+        model = SINF(ndim=ndim).requires_grad_(False)
     
     if args.restore:
         try:
@@ -316,7 +316,7 @@ if __name__ == "__main__":
                           [3,3,1],
                           [2,2,3],
                           [2,2,1]]
-            K_factor3 = 2 #n_component = K_factor * patch_size[0]
+            K_factor3 = 2 #K = K_factor * patch_size[0]
             K_factor1 = 1 
         elif args.dataset == 'cifar10':
             patch_size = [[32,32,3], 
@@ -335,7 +335,7 @@ if __name__ == "__main__":
                           [3,3,1],
                           [2,2,3],
                           [2,2,1]]
-            K_factor3 = 2 #n_component = K_factor * patch_size[0]
+            K_factor3 = 2 #K = K_factor * patch_size[0]
             K_factor1 = 1 
         elif args.dataset in ['mnist', 'fmnist']:
             patch_size = [[28,28,1], 
@@ -346,28 +346,28 @@ if __name__ == "__main__":
                           [4,4,1],
                           [3,3,1],
                           [2,2,1]]
-            K_factor1 = 2 #n_component = K_factor * patch_size[0]
+            K_factor1 = 2 #K = K_factor * patch_size[0]
 
         args.save = args.save + 'SIG_%s_seed%d_hierarchy' % (args.dataset, args.seed)
        
         for patch in patch_size:
             if patch[-1] == 3:
                 Niter = 200
-                n_component = K_factor3 * patch[0]
+                K = K_factor3 * patch[0]
             elif patch[-1] == 1:
                 Niter = 100
-                n_component = K_factor1 * patch[0]
-            #nsample_wT = int(np.log10(np.prod(patch))*30000)
+                K = K_factor1 * patch[0]
+            #nsample_A = int(np.log10(np.prod(patch))*30000)
             for _ in range(Niter):
                 nlayer += 1 
                 if nlayer <= len(model.layer):
                     continue
                 if patch[0] == shape[0] and patch[2] == shape[2]:
-                    model, sample, sample_test = add_one_layer_inverse(model, data_train, sample, n_component, nsample_wT, nsample, layer_type='regular', 
+                    model, sample, sample_test = add_one_layer_inverse(model, data_train, sample, K, nsample_A, nsample, layer_type='regular', 
                                                                        batchsize=batchsize, sample_test=sample_test, put_data_on_disk=args.put_data_on_disk, pool=pool)
                 else:
                     shift = torch.randint(shape[0], (2,)).tolist()
-                    model, sample, sample_test = add_one_layer_inverse(model, data_train, sample, n_component, nsample_wT, nsample, layer_type='patch', shape=shape, kernel=patch, 
+                    model, sample, sample_test = add_one_layer_inverse(model, data_train, sample, K, nsample_A, nsample, layer_type='patch', shape=shape, kernel=patch, 
                                                                        shift=shift, batchsize=batchsize, sample_test=sample_test, put_data_on_disk=args.put_data_on_disk, pool=pool)
                 if len(model.layer) % update_iteration == 0:
                     print()
@@ -394,20 +394,20 @@ if __name__ == "__main__":
     else:
         args.save + 'SIG_%s_seed%d' % (args.dataset, args.seed)
         if args.dataset == 'celeba':
-            n_component = 128 
+            K = 128 
             Niter = 2700
         elif args.dataset == 'cifar10':
-            n_component = 64
+            K = 64
             Niter = 2500
         elif args.dataset in ['mnist', 'fmnist']:
-            n_component = 56
+            K = 56
             Niter = 800
         
         for _ in range(Niter):
             nlayer += 1
             if nlayer <= len(model.layer):
                 continue
-            model, sample, sample_test = add_one_layer_inverse(model, data_train, sample, n_component, nsample_wT, nsample_spline, layer_type='regular', 
+            model, sample, sample_test = add_one_layer_inverse(model, data_train, sample, K, nsample_A, nsample_spline, layer_type='regular', 
                                                                batchsize=batchsize, sample_test=sample_test, put_data_on_disk=args.put_data_on_disk)
             if len(model.layer) % update_iteration == 0:
                 print()

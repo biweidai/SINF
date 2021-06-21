@@ -1,9 +1,9 @@
-from SIT import *
+from SINF import *
 from load_data import * 
 import argparse
 
-def GIS(data_train, data_validate=None, iteration=None, weight_train=None, weight_validate=None, n_component=None, interp_nbin=None, KDE=True, bw_factor=1, alpha=None, edge_bins=None, 
-        ndata_wT=None, MSWD_max_iter=None, NBfirstlayer=False, logit=False, Whiten=False, batchsize=None, nocuda=False, patch=False, shape=[28,28,1], model=None, verbose=True):
+def GIS(data_train, data_validate=None, iteration=None, weight_train=None, weight_validate=None, K=None, M=None, KDE=True, b_factor=1, alpha=None, edge_bins=None, 
+        ndata_A=None, MSWD_max_iter=None, NBfirstlayer=False, logit=False, Whiten=False, batchsize=None, nocuda=False, patch=False, shape=[28,28,1], model=None, verbose=True):
     
     assert data_validate is not None or iteration is not None
  
@@ -13,8 +13,8 @@ def GIS(data_train, data_validate=None, iteration=None, weight_train=None, weigh
         ndata = len(data_train)
     else:
         ndata = (torch.sum(weight_train)**2 / torch.sum(weight_train**2)).item()
-    if interp_nbin is None:
-        interp_nbin = max(min(200, int(ndata**0.5)), 50)
+    if M is None:
+        M = max(min(200, int(ndata**0.5)), 50)
     if alpha is None:
         alpha = (1-0.02*math.log10(ndata), 1-0.001*math.log10(ndata))
     if edge_bins is None:
@@ -22,19 +22,19 @@ def GIS(data_train, data_validate=None, iteration=None, weight_train=None, weigh
     if batchsize is None:
         batchsize = len(data_train)
     if not patch:
-        if n_component is None:
+        if K is None:
             if ndim <= 8 or ndata / float(ndim) < 20:
-                n_component = ndim
+                K = ndim
             else:
-                n_component = 8
-        if ndata_wT is None:
-            ndata_wT = min(len(data_train), int(math.log10(ndim)*1e5))
+                K = 8
+        if ndata_A is None:
+            ndata_A = min(len(data_train), int(math.log10(ndim)*1e5))
         if MSWD_max_iter is None:
             MSWD_max_iter = min(round(ndata) // ndim, 200)
     else:
         assert shape[0] > 4 and shape[1] > 4
-        n_component0 = n_component
-        ndata_wT0 = ndata_wT
+        K0 = K
+        ndata_A0 = ndata_A
         MSWD_max_iter0 = MSWD_max_iter
 
     #device
@@ -45,7 +45,7 @@ def GIS(data_train, data_validate=None, iteration=None, weight_train=None, weigh
 
     #define the model
     if model is None:
-        model = SIT(ndim=ndim).requires_grad_(False).to(device)
+        model = SINF(ndim=ndim).requires_grad_(False).to(device)
         logj_train = torch.zeros(len(data_train), device=device)
         if data_validate is not None:
             data_validate = data_validate.to(device)
@@ -137,36 +137,36 @@ def GIS(data_train, data_validate=None, iteration=None, weight_train=None, weigh
                 shift = torch.randint(2, (2,)).tolist()
             #hyperparameter
             ndim = np.prod(kernel)
-            if n_component0 is None:
+            if K0 is None:
                 if ndim <= 8 or len(data_train) / float(ndim) < 20:
-                    n_component = ndim
+                    K = ndim
                 else:
-                    n_component = 8
-            elif n_component0 > ndim:
-                n_component = ndim
+                    K = 8
+            elif K0 > ndim:
+                K = ndim
             else:
-                n_component = n_component0
-            if ndata_wT0 is None:
-                ndata_wT = min(len(data_train), int(math.log10(ndim)*1e5))
+                K = K0
+            if ndata_A0 is None:
+                ndata_A = min(len(data_train), int(math.log10(ndim)*1e5))
             if MSWD_max_iter0 is None:
                 MSWD_max_iter = min(len(data_train) // ndim, 200)
             
-            layer = PatchSlicedTransport(shape=shape, kernel_size=kernel, shift=shift, n_component=n_component, interp_nbin=interp_nbin).requires_grad_(False).to(device)
+            layer = PatchSlicedTransport(shape=shape, kernel_size=kernel, shift=shift, K=K, M=M).requires_grad_(False).to(device)
         else:
             #regular GIS layer
             if NBfirstlayer:
-                layer = SlicedTransport(ndim=ndim, n_component=ndim, interp_nbin=interp_nbin).requires_grad_(False).to(device)
+                layer = SlicedTransport(ndim=ndim, K=ndim, M=M).requires_grad_(False).to(device)
             else:
-                layer = SlicedTransport(ndim=ndim, n_component=n_component, interp_nbin=interp_nbin).requires_grad_(False).to(device)
+                layer = SlicedTransport(ndim=ndim, K=K, M=M).requires_grad_(False).to(device)
         
         #fit the layer
         if NBfirstlayer:
-            layer.wT[:] = torch.eye(ndim).to(device)
+            layer.A[:] = torch.eye(ndim).to(device)
             NBfirstlayer = False
         elif ndim > 1:
-            layer.fit_wT(data=data_train, weight=weight_train, ndata_wT=ndata_wT, MSWD_max_iter=MSWD_max_iter, verbose=verbose)
+            layer.fit_A(data=data_train, weight=weight_train, ndata_A=ndata_A, MSWD_max_iter=MSWD_max_iter, verbose=verbose)
 
-        layer.fit_spline(data=data_train, weight=weight_train, edge_bins=edge_bins, alpha=alpha, KDE=KDE, bw_factor=bw_factor, batchsize=batchsize, verbose=verbose)
+        layer.fit_spline(data=data_train, weight=weight_train, edge_bins=edge_bins, alpha=alpha, KDE=KDE, b_factor=b_factor, batchsize=batchsize, verbose=verbose)
 
         #update the data
         data_train, logj_train = transform_batch_layer(layer, data_train, batchsize, logj=logj_train, direction='forward', nocuda=nocuda)

@@ -32,7 +32,7 @@ class kde(object):
     https://github.com/scipy/scipy/blob/master/scipy/stats/kde.py
     """
 
-    def __init__(self, dataset, bw_factor=None, weights=None, batchsize=None):
+    def __init__(self, dataset, b_factor=None, weights=None, batchsize=None):
         if dataset.ndim == 1:
             self.dataset = dataset[:, None]
         elif dataset.ndim == 2:
@@ -54,8 +54,8 @@ class kde(object):
         else:
             self.neff = self.n
         
-        self.bw_factor = bw_factor if bw_factor is not None else 1
-        self.factor = self.neff ** (-1. / (self.d + 4)) * self.bw_factor
+        self.b_factor = b_factor if b_factor is not None else 1
+        self.factor = self.neff ** (-1. / (self.d + 4)) * self.b_factor
         
         if weights is None:
             data = self.dataset - torch.mean(self.dataset, dim=0)
@@ -238,7 +238,7 @@ class kde(object):
 class RQspline(nn.Module):
     '''
     Ratianal quadratic spline.
-    See appendix A.1 of https://arxiv.org/pdf/1906.04032.pdf
+    See appendix B of https://arxiv.org/pdf/2007.00674.pdf
     The main advantage compared to cubic spline is that the
     inverse is analytical and does not require binary search
 
@@ -364,14 +364,14 @@ class RQspline(nn.Module):
         return x, logderiv
 
 
-def estimate_knots_gaussian(data, interp_nbin, above_noise, weight=None, edge_bins=0, derivclip=None, extrapolate='regression', alpha=(0.9, 0.99), KDE=True, bw_factor=1, batchsize=None):
+def estimate_knots_gaussian(data, M, above_noise, weight=None, edge_bins=0, derivclip=None, extrapolate='regression', alpha=(0.9, 0.99), KDE=True, b_factor=1, batchsize=None):
 
     if not KDE and weight is not None:
         raise NotImplementedError
 
-    start = 1. / (interp_nbin-2*edge_bins+1)
+    start = 1. / (M-2*edge_bins+1)
     end = 1.-start
-    q1 = torch.linspace(start, end, interp_nbin-2*edge_bins, device=data.device)
+    q1 = torch.linspace(start, end, M-2*edge_bins, device=data.device)
     if edge_bins > 0:
         start = start / (edge_bins+1)
         end = q1[0]-start
@@ -382,7 +382,7 @@ def estimate_knots_gaussian(data, interp_nbin, above_noise, weight=None, edge_bi
         q = torch.cat((q0,q1,q2), dim=0)
     else:
         q = q1
-    x = torch.randn(data.shape[1], interp_nbin, device=data.device)
+    x = torch.randn(data.shape[1], M, device=data.device)
     x = torch.sort(x, dim=1)[0]
     y = x.clone()
     deriv = torch.ones_like(x)
@@ -391,7 +391,7 @@ def estimate_knots_gaussian(data, interp_nbin, above_noise, weight=None, edge_bi
     for i in range(data.shape[1]):
         if above_noise[i]:
             if KDE:
-                rho = kde(data[:,i], bw_factor=bw_factor, weights=weight, batchsize=batchsize)
+                rho = kde(data[:,i], b_factor=b_factor, weights=weight, batchsize=batchsize)
                 scale = (rho.covariance[0,0]+1)**0.5
                 if weight is not None:
                     x[i] = quantile_weights(data[:,i], q, weight, scale)
@@ -497,11 +497,11 @@ def estimate_knots_gaussian(data, interp_nbin, above_noise, weight=None, edge_bi
     return x, y, deriv
 
 
-def estimate_knots(data, sample, interp_nbin, above_noise, edge_bins=4, derivclip=1, extrapolate='regression', alpha=(0, 0), KDE=True, bw_factor_data=1, bw_factor_sample=1, batchsize=None):
+def estimate_knots(data, sample, M, above_noise, edge_bins=4, derivclip=1, extrapolate='regression', alpha=(0, 0), KDE=True, b_factor_data=1, b_factor_sample=1, batchsize=None):
 
-    start = 1. / (interp_nbin-2*edge_bins+1)
+    start = 1. / (M-2*edge_bins+1)
     end = 1.-start
-    q1 = torch.linspace(start, end, interp_nbin-2*edge_bins, device=data.device)
+    q1 = torch.linspace(start, end, M-2*edge_bins, device=data.device)
     if edge_bins > 0:
         start = start / (edge_bins+1)
         end = q1[0]-start
@@ -512,7 +512,7 @@ def estimate_knots(data, sample, interp_nbin, above_noise, edge_bins=4, derivcli
         q = torch.cat((q0,q1,q2), dim=0)
     else:
         q = q1
-    y = torch.zeros(sample.shape[1], interp_nbin, device=sample.device)
+    y = torch.zeros(sample.shape[1], M, device=sample.device)
     for i in range(len(y)):
         y[i] = torch.quantile(sample[:,i], q)
     x = y.clone()
@@ -530,8 +530,8 @@ def estimate_knots(data, sample, interp_nbin, above_noise, edge_bins=4, derivcli
     for i in range(data.shape[1]):
         if above_noise[i]:
             if KDE:
-                rho = kde(data[:,i], bw_factor=bw_factor_data, batchsize=batchsize)
-                rhos = kde(sample[:,i], bw_factor=bw_factor_sample, batchsize=batchsize)
+                rho = kde(data[:,i], b_factor=b_factor_data, batchsize=batchsize)
+                rhos = kde(sample[:,i], b_factor=b_factor_sample, batchsize=batchsize)
 
                 #inverse cdf
                 invx = rho.cdf(invy[i])
