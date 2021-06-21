@@ -199,7 +199,7 @@ class boundary(nn.Module):
         for i in range(data.shape[1]):
             if self.bounds[i] == [None, None]:
                 continue
-            elif self.bounds[i][0] is None or self.bounds[i][0] is None:
+            elif self.bounds[i][0] is None or self.bounds[i][1] is None:
                 if self.bounds[i][1] is None:
                     data[:,i] = data[:,i] - self.bounds[i][0] + self.lambd
                 else:
@@ -224,15 +224,15 @@ class boundary(nn.Module):
         for i in range(data.shape[1]):
             if self.bounds[i] == [None, None]:
                 continue
-            elif self.bounds[i][0] is None or self.bounds[i][0] is None:
+            elif self.bounds[i][0] is None or self.bounds[i][1] is None:
                 x = data[:,i].clone()
-                select = x < self.threshold/self.beta
+                select = x < 20./self.beta
                 x[select] = torch.log(torch.exp(self.beta*x[select])+1) / self.beta
                 logj = logj + self.beta * (x - data[:,i])
                 if self.bounds[i][1] is None:
-                    data[:,i] = z + self.bounds[i][0] - self.lambd
+                    data[:,i] = x + self.bounds[i][0] - self.lambd
                 else:
-                    data[:,i] = - z + self.bounds[i][1] + self.lambd
+                    data[:,i] = - x + self.bounds[i][1] + self.lambd
             else:
                 data[:,i] = torch.sigmoid(data[:,i]) 
                 logj = logj - torch.log(data[:,i]*(1-data[:,i])) + math.log((1-2*self.lambd) / (self.bounds[i][1] - self.bounds[i][0]))
