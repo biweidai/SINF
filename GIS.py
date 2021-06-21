@@ -2,8 +2,8 @@ from SIT import *
 from load_data import * 
 import argparse
 
-def GIS(data_train, data_validate=None, iteration=None, weight_train=None, weight_validate=None, n_component=None, interp_nbin=None, KDE=True, bw_factor=0.5, alpha=None, edge_bins=None, 
-        ndata_wT=None, MSWD_max_iter=None, NBfirstlayer=False, logit=False, Whiten=False, batchsize=None, nocuda=False, patch=False, shape=[28,28,1], verbose=True):
+def GIS(data_train, data_validate=None, iteration=None, weight_train=None, weight_validate=None, n_component=None, interp_nbin=None, KDE=True, bw_factor=1, alpha=None, edge_bins=None, 
+        ndata_wT=None, MSWD_max_iter=None, NBfirstlayer=False, logit=False, Whiten=False, batchsize=None, nocuda=False, patch=False, shape=[28,28,1], model=None, verbose=True):
     
     assert data_validate is not None or iteration is not None
  
@@ -14,7 +14,7 @@ def GIS(data_train, data_validate=None, iteration=None, weight_train=None, weigh
     else:
         ndata = (torch.sum(weight_train)**2 / torch.sum(weight_train**2)).item()
     if interp_nbin is None:
-        interp_nbin = max(min(200, int(ndata**0.5)), 2)
+        interp_nbin = max(min(200, int(ndata**0.5)), 50)
     if alpha is None:
         alpha = (1-0.02*math.log10(ndata), 1-0.001*math.log10(ndata))
     if edge_bins is None:
@@ -38,25 +38,35 @@ def GIS(data_train, data_validate=None, iteration=None, weight_train=None, weigh
         MSWD_max_iter0 = MSWD_max_iter
 
     #device
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    if nocuda:
-        device = torch.device("cpu")
+    device = torch.device("cuda:0" if torch.cuda.is_available() and not nocuda else "cpu")
     data_train = data_train.to(device)
     if weight_train is not None:
         weight_train = weight_train.to(device)
 
     #define the model
-    model = SIT(ndim=ndim).requires_grad_(False).to(device)
-    logj_train = torch.zeros(len(data_train), device=device)
-    if data_validate is not None:
-        data_validate = data_validate.to(device)
-        if weight_validate is not None:
-            weight_validate = weight_validate.to(device)
-        logj_validate = torch.zeros(len(data_validate), device=device)
-        best_logp_validate = -1e10
-        best_Nlayer = 0
-        wait = 0
-        maxwait = 5 
+    if model is None:
+        model = SIT(ndim=ndim).requires_grad_(False).to(device)
+        logj_train = torch.zeros(len(data_train), device=device)
+        if data_validate is not None:
+            data_validate = data_validate.to(device)
+            if weight_validate is not None:
+                weight_validate = weight_validate.to(device)
+            logj_validate = torch.zeros(len(data_validate), device=device)
+            best_logp_validate = -1e10
+            best_Nlayer = 0
+            wait = 0
+            maxwait = 5 
+    else:
+        t = time.time()
+        data_train, logj_train = transform_batch_model(model, data_train, batchsize, logj=None, start=0, end=None, nocuda=nocuda)
+        logp_train = (torch.mean(logj_train) - ndim/2*torch.log(torch.tensor(2*math.pi)) - torch.mean(torch.sum(data_train**2,  dim=1)/2)).item()
+    
+        if data_validate is not None:
+            data_validate, logj_validate = transform_batch_model(model, data_validate, batchsize, logj=None, start=0, end=None, nocuda=nocuda)
+            logp_validate = (torch.mean(logj_validate) - ndim/2*torch.log(torch.tensor(2*math.pi)) - torch.mean(torch.sum(data_validate**2,  dim=1)/2)).item()
+            print ('Initial logp:', logp_train, logp_validate, 'time:', time.time()-t, 'iteration:', len(model.layer))
+        else:
+            print ('Initial logp:', logp_train, 'time:', time.time()-t, 'iteration:', len(model.layer))
 
     #logit transform
     if logit:
@@ -159,7 +169,7 @@ def GIS(data_train, data_validate=None, iteration=None, weight_train=None, weigh
         layer.fit_spline(data=data_train, weight=weight_train, edge_bins=edge_bins, alpha=alpha, KDE=KDE, bw_factor=bw_factor, batchsize=batchsize, verbose=verbose)
 
         #update the data
-        data_train, logj_train = transform_batch_layer(layer, data_train, batchsize, logj=logj_train, direction='forward')
+        data_train, logj_train = transform_batch_layer(layer, data_train, batchsize, logj=logj_train, direction='forward', nocuda=nocuda)
         if weight_train is None:
             logp_train = (torch.mean(logj_train) - ndim/2*torch.log(torch.tensor(2*math.pi)) - torch.mean(torch.sum(data_train**2,  dim=1)/2)).item()
         else:
@@ -168,7 +178,7 @@ def GIS(data_train, data_validate=None, iteration=None, weight_train=None, weigh
         model.add_layer(layer)
 
         if data_validate is not None:
-            data_validate, logj_validate = transform_batch_layer(layer, data_validate, batchsize, logj=logj_validate, direction='forward')
+            data_validate, logj_validate = transform_batch_layer(layer, data_validate, batchsize, logj=logj_validate, direction='forward', nocuda=nocuda)
             if weight_validate is None:
                 logp_validate = (torch.mean(logj_validate) - ndim/2*torch.log(torch.tensor(2*math.pi)) - torch.mean(torch.sum(data_validate**2,  dim=1)/2)).item()
             else:
@@ -218,23 +228,29 @@ if __name__ == "__main__":
     parser.add_argument('--whiten', action='store_true',
                         help='Whether to whiten the data before applying GIS. Not recommended for small datasets.')
     
+    parser.add_argument('--logit', action='store_true',
+                        help='Whether to apply logit transformation before applying GIS. Only recommended for image datasets.')
+    
     parser.add_argument('--save', type=str, default='/global/scratch/biwei/model/GIS/',
                         help='Where to save the trained model.')
     
     parser.add_argument('--restore', type=str, help='Path to model to restore.')
+
+    parser.add_argument('--nocuda', action='store_true', help='Use cpu instead of gpu.')
     
     args = parser.parse_args()
     
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
-    torch.cuda.manual_seed_all(args.seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-    
-    assert torch.cuda.is_available()
-    device = torch.device('cuda')
-    torch.set_default_tensor_type('torch.cuda.FloatTensor')
-    
+    if torch.cuda.is_available() and not args.nocuda:
+        torch.cuda.manual_seed_all(args.seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+        device = torch.device('cuda')
+        torch.set_default_tensor_type('torch.cuda.FloatTensor')
+    else:
+        device = torch.device('cpu')
+
     if args.dataset == 'power':
         data_train, data_validate, data_test = load_data_power()
     elif args.dataset == 'gas':
@@ -273,164 +289,34 @@ if __name__ == "__main__":
         data_train = data_train[torch.randperm(len(data_train))][:args.train_size]
     
     if args.validate_size > 0:
-        assert args.validate_size <= len(data_validate)
-        data_validate = data_validate[torch.randperm(len(data_validate))][:args.validate_size]
+        if args.validate_size >= len(data_validate):
+            args.validate_size = len(data_validate)
+        else:
+            data_validate = data_validate[torch.randperm(len(data_validate))][:args.validate_size]
     
-    #hyperparameters
-    ndim = data_train.shape[1] 
-    if ndim <= 8 or len(data_train) / float(ndim) < 20:
-        n_component = ndim 
-    else:
-        n_component = 8 
-    interp_nbin = min(200, int(len(data_train)**0.5)) 
-    KDE = True 
-    bw_factor_data = 0.5 
-    alpha = (1-0.02*math.log10(len(data_train)), 1-0.001*math.log10(len(data_train))) 
-    edge_bins = round(math.log10(len(data_train)))-1
-    batchsize = 2**15 
-    ndata_wT = min(len(data_train), int(math.log10(ndim)*1e5)) 
-    MSWD_max_iter = min(len(data_train) // ndim, 200)
-    
-    verbose = True
-    update_iteration = 1000
-    
-    t_total = time.time()
     
     #define the model
     if args.restore:    
+        t = time.time()
         model = torch.load(args.restore)
-        print('Successfully load in the model. Time:', time.time()-t_total)
-    
-        t = time.time()
-    
-        data_train, logj_train = transform_batch_model(model, data_train, batchsize, logj=None, start=0, end=None)
-        logp_train.append((torch.mean(logj_train) - ndim/2*torch.log(torch.tensor(2*math.pi)) - torch.mean(torch.sum(data_train**2,  dim=1)/2)).item())
-    
-        data_validate, logj_validate = transform_batch_model(model, data_validate, batchsize, logj=None, start=0, end=None)
-        logp_validate.append((torch.mean(logj_validate) - ndim/2*torch.log(torch.tensor(2*math.pi)) - torch.mean(torch.sum(data_validate**2,  dim=1)/2)).item())
-    
-        data_test, logj_test = transform_batch_model(model, data_test, batchsize, logj=None, start=0, end=None)
-        logp_test.append((torch.mean(logj_test) - ndim/2*torch.log(torch.tensor(2*math.pi)) - torch.mean(torch.sum(data_test**2,  dim=1)/2)).item())
-    
-        print ('Current logp:', logp_train[-1], logp_validate[-1], logp_test[-1], 'time:', time.time()-t, 'iteration:', len(model.layer))
-    
+        print('Successfully load in the model. Time:', time.time()-t)
     else:
-        model = SIT(ndim=ndim).requires_grad_(False).to(device)
+        model = None 
     
-        logp_train = []
-        logp_validate = []
-        logp_test = []
-        SWD = []
-        
-        logj_train = torch.zeros(len(data_train))
-        logj_validate = torch.zeros(len(data_validate))
-        logj_test = torch.zeros(len(data_test))
-        
-        best_validate_logp = -1e10
-        best_Nlayer = 0
-        
-        if args.dataset in ['mnist', 'fmnist', 'cifar10']:
-            #logit transform
-            layer = logit(lambd=1e-5).to(device)
-            data_train, logj_train = layer(data_train)
-            logp_train.append((torch.mean(logj_train) - ndim/2*torch.log(torch.tensor(2*math.pi)) - torch.mean(torch.sum(data_train**2,  dim=1)/2)).item())
-        
-            data_validate, logj_validate = layer(data_validate)
-            logp_validate.append((torch.mean(logj_validate) - ndim/2*torch.log(torch.tensor(2*math.pi)) - torch.mean(torch.sum(data_validate**2,  dim=1)/2)).item())
-        
-            data_test, logj_test = layer(data_test)
-            logp_test.append((torch.mean(logj_test) - ndim/2*torch.log(torch.tensor(2*math.pi)) - torch.mean(torch.sum(data_test**2,  dim=1)/2)).item())
-        
-            model.add_layer(layer)
-            print('After logit transform logp:', logp_train[-1], logp_validate[-1], logp_test[-1])
-            
-            best_validate_logp = logp_validate[-1]
-            best_Nlayer = 1 
-        
-        #whiten layer
-        if args.whiten:
-            layer = whiten(ndim_data=ndim, scale=True, ndim_latent=ndim).requires_grad_(False).to(device)
-            layer.fit(data_train)
-        
-            data_train, logj_train = layer(data_train)
-            logp_train.append((torch.mean(logj_train) - ndim/2*torch.log(torch.tensor(2*math.pi)) - torch.mean(torch.sum(data_train**2,  dim=1)/2)).item())
-        
-            data_validate, logj_validate = layer(data_validate)
-            logp_validate.append((torch.mean(logj_validate) - ndim/2*torch.log(torch.tensor(2*math.pi)) - torch.mean(torch.sum(data_validate**2,  dim=1)/2)).item())
-        
-            data_test, logj_test = layer(data_test)
-            logp_test.append((torch.mean(logj_test) - ndim/2*torch.log(torch.tensor(2*math.pi)) - torch.mean(torch.sum(data_test**2,  dim=1)/2)).item())
-        
-            model.add_layer(layer)
-            print('After whiten logp:', logp_train[-1], logp_validate[-1], logp_test[-1])
-            print()
+    t = time.time()
+
+    #training
+    if args.dataset in ['power', 'gas', 'hepmass', 'miniboone', 'bsds300']:
+        model = GIS(data_train, data_validate, logit=args.logit, Whiten=args.whiten, batchsize=2**15, model=model, nocuda=args.nocuda)
+    else:
+        model = GIS(data_train, data_validate, logit=args.logit, Whiten=args.whiten, batchsize=2**15, patch=True, shape=shape, model=model, nocuda=args.nocuda)
+
+    print('Training time:', time.time()-t)
     
-    wait = 0
-    
-    #begin training
-    while True:
-        t = time.time()
-    
-        if args.dataset in ['power', 'gas', 'hepmass', 'miniboone', 'bsds300']:
-            layer = SlicedTransport(ndim=ndim, n_component=n_component, interp_nbin=interp_nbin).requires_grad_(False).to(device)
-        elif len(model.layer) % 2 == 0:
-            kernel = [4, 4]
-            n_component = 8
-            MSWD_max_iter = min(len(data_train) // (16*shape[-1]), 200)
-            shift = torch.randint(4, (2,)).tolist()
-            layer = PatchSlicedTransport(shape=shape, kernel_size=kernel, shift=shift, n_component=n_component, interp_nbin=interp_nbin).requires_grad_(False).to(device)
-        else:
-            kernel = [2, 2]
-            n_component = 4
-            MSWD_max_iter = min(len(data_train) // (4*shape[-1]), 200)
-            shift = torch.randint(2, (2,)).tolist()
-            layer = PatchSlicedTransport(shape=shape, kernel_size=kernel, shift=shift, n_component=n_component, interp_nbin=interp_nbin).requires_grad_(False).to(device)
-       
-        #fit the layer
-        if ndata_wT < len(data_train) and ndim > 1:
-            order = torch.randperm(data_train.shape[0])
-            layer.fit_wT(data=data_train[order][:ndata_wT], MSWD_max_iter=MSWD_max_iter, verbose=verbose)
-        else:
-            layer.fit_wT(data=data_train, MSWD_max_iter=MSWD_max_iter, verbose=verbose)
-        
-        SWD1 = layer.fit_spline(data=data_train, edge_bins=edge_bins, alpha=alpha, KDE=KDE, bw_factor=bw_factor_data, batchsize=batchsize, verbose=verbose)
-    
-        #update the data
-        data_train, logj_train = transform_batch_layer(layer, data_train, batchsize, logj=logj_train, direction='forward')
-        logp_train.append((torch.mean(logj_train) - ndim/2*torch.log(torch.tensor(2*math.pi)) - torch.mean(torch.sum(data_train**2,  dim=1)/2)).item())
-    
-        data_validate, logj_validate = transform_batch_layer(layer, data_validate, batchsize, logj=logj_validate, direction='forward')
-        logp_validate.append((torch.mean(logj_validate) - ndim/2*torch.log(torch.tensor(2*math.pi)) - torch.mean(torch.sum(data_validate**2,  dim=1)/2)).item())
-    
-        data_test, logj_test = transform_batch_layer(layer, data_test, batchsize, logj=logj_test, direction='forward')
-        logp_test.append((torch.mean(logj_test) - ndim/2*torch.log(torch.tensor(2*math.pi)) - torch.mean(torch.sum(data_test**2,  dim=1)/2)).item())
-    
-        SWD.append(SWD1)
-        model.add_layer(layer)
-    
-        if logp_validate[-1] > best_validate_logp:
-            best_validate_logp = logp_validate[-1]
-            best_Nlayer = len(model.layer) 
-            wait = 0
-        else:
-            wait += 1
-    
-        print ('logp:', logp_train[-1], logp_validate[-1], logp_test[-1], 'time:', time.time()-t, 'iteration:', len(model.layer), 'best:', best_Nlayer)
-        print ()
-    
-        if wait == 100:
-            break
-    
-        if len(model.layer) % update_iteration == 0:
-            print()
-            print('Finished %d iterations' % len(model.layer), 'Total Time:', time.time()-t_total)
-            print()
-            torch.save(model, args.save + 'GIS_%s_train%d_validate%d_seed%d' % (args.dataset, len(data_train), len(data_validate), args.seed))
-    
-    
-    model.layer = model.layer[:best_Nlayer]
-    print ('best logp:', logp_train[best_Nlayer-1], logp_validate[best_Nlayer-1], logp_test[best_Nlayer-1], 'time:', time.time()-t_total, 'iteration:', len(model.layer))
     torch.save(model, args.save + 'GIS_%s_train%d_validate%d_seed%d' % (args.dataset, len(data_train), len(data_validate), args.seed))
+
+    print('Test logp:', torch.mean(model.evaluate_density(data_test)).item())
     print ()
     print ()
     print ()
+     
