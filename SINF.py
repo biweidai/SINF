@@ -211,8 +211,8 @@ class boundary(nn.Module):
                 logj = logj + self.beta * (data[:,i] - z)
                 data[:,i] = z
             else:
-                data[:,i] = self.lambd + (1 - 2 * self.lambd) * data[:,i]
-                logj = logj - torch.log(data[:,i]*(1-data[:,i])) + math.log(1-2*self.lambd)
+                data[:,i] = self.lambd + (1 - 2 * self.lambd) * (data[:,i] - self.bounds[i][0]) / (self.bounds[i][1] - self.bounds[i][0])
+                logj = logj - torch.log(data[:,i]*(1-data[:,i])) + math.log((1-2*self.lambd) / (self.bounds[i][1] - self.bounds[i][0]))
                 data[:,i] = torch.log(data[:,i]) - torch.log1p(-data[:,i])
 
         return data, logj
@@ -235,8 +235,8 @@ class boundary(nn.Module):
                     data[:,i] = - z + self.bounds[i][1] + self.lambd
             else:
                 data[:,i] = torch.sigmoid(data[:,i]) 
-                logj = logj - torch.log(data[:,i]*(1-data[:,i])) + math.log(1-2*self.lambd)
-                data[:,i] = (data[:,i] - self.lambd) / (1. - 2 * self.lambd) 
+                logj = logj - torch.log(data[:,i]*(1-data[:,i])) + math.log((1-2*self.lambd) / (self.bounds[i][1] - self.bounds[i][0]))
+                data[:,i] = (data[:,i] - self.lambd) / (1. - 2 * self.lambd) * (self.bounds[i][1] - self.bounds[i][0]) + self.bounds[i][0]
 
         return data, logj
 
