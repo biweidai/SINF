@@ -257,9 +257,6 @@ if __name__ == "__main__":
     parser.add_argument('--whiten', action='store_true',
                         help='Whether to whiten the data before applying GIS. Not recommended for small datasets.')
     
-    parser.add_argument('--logit', action='store_true',
-                        help='Whether to apply logit transformation before applying GIS. Only recommended for image datasets.')
-    
     parser.add_argument('--save', type=str, default='/global/scratch/biwei/model/GIS/',
                         help='Where to save the trained model.')
     
@@ -306,9 +303,13 @@ if __name__ == "__main__":
         data_test = torch.tensor(data_test).float().to(device)
     else:
         data_train = torch.tensor(data_train).float().reshape(len(data_train), -1).to(device)
-        data_train = (data_train + torch.rand_like(data_train)) / 256.
+        data_train = data_train + torch.rand_like(data_train)
         data_test = torch.tensor(data_test).float().reshape(len(data_test), -1).to(device)
-        data_test = (data_test + torch.rand_like(data_test)) / 256.
+        data_test = data_test + torch.rand_like(data_test)
+        if args.dataset in ['mnist', 'fmnist']:
+            bounds = [[0,256]] * 784
+        else:
+            bounds = [[0,256]] * 3072
         
         data_validate = data_train[-10000:]
         data_train = data_train[:-10000]
@@ -336,9 +337,9 @@ if __name__ == "__main__":
 
     #training
     if args.dataset in ['power', 'gas', 'hepmass', 'miniboone', 'bsds300']:
-        model = GIS(data_train, data_validate, logit=args.logit, Whiten=args.whiten, batchsize=2**15, model=model, nocuda=args.nocuda)
+        model = GIS(data_train, data_validate, Whiten=args.whiten, batchsize=2**15, model=model, nocuda=args.nocuda)
     else:
-        model = GIS(data_train, data_validate, logit=args.logit, Whiten=args.whiten, batchsize=2**15, patch=True, shape=shape, model=model, nocuda=args.nocuda)
+        model = GIS(data_train, data_validate, bounds=bounds, Whiten=args.whiten, batchsize=2**15, patch=True, shape=shape, model=model, nocuda=args.nocuda)
 
     print('Training time:', time.time()-t)
     
