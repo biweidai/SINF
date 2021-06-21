@@ -180,6 +180,68 @@ class logit(nn.Module):
 
 
 
+class boundary(nn.Module):
+
+    #transformation that maps bounded parameters to unbounded.
+    #logit transform or inverse softplus transform.
+
+    def __init__(self, bounds, lambd=1e-5, beta=1):
+
+        super().__init__()
+        self.bounds = bounds
+        self.lambd = lambd
+        self.beta = beta
+
+
+    def forward(self, data, param=None):
+
+        logj = torch.zeros(len(data), device=data.device)
+        for i in range(data.shape[1]):
+            if self.bounds[i] == [None, None]:
+                continue
+            elif self.bounds[i][0] is None or self.bounds[i][0] is None:
+                if self.bounds[i][1] is None:
+                    data[:,i] = data[:,i] - self.bounds[i][0] + self.lambd
+                else:
+                    data[:,i] = - data[:,i] + self.bounds[i][1] + self.lambd
+                z = data[:,i].clone()
+                assert (z >= self.lambd).all()
+                select = z < 20./self.beta
+                z[select] = torch.log(torch.exp(self.beta*z[select])-1) / self.beta
+                logj = logj + self.beta * (data[:,i] - z)
+                data[:,i] = z
+            else:
+                data[:,i] = self.lambd + (1 - 2 * self.lambd) * data[:,i]
+                logj = logj - torch.log(data[:,i]*(1-data[:,i])) + math.log(1-2*self.lambd)
+                data[:,i] = torch.log(data[:,i]) - torch.log1p(-data[:,i])
+
+        return data, logj
+
+
+    def inverse(self, data, param=None):
+
+        logj = torch.zeros(len(data), device=data.device)
+        for i in range(data.shape[1]):
+            if self.bounds[i] == [None, None]:
+                continue
+            elif self.bounds[i][0] is None or self.bounds[i][0] is None:
+                x = data[:,i].clone()
+                select = x < self.threshold/self.beta
+                x[select] = torch.log(torch.exp(self.beta*x[select])+1) / self.beta
+                logj = logj + self.beta * (x - data[:,i])
+                if self.bounds[i][1] is None:
+                    data[:,i] = z + self.bounds[i][0] - self.lambd
+                else:
+                    data[:,i] = - z + self.bounds[i][1] + self.lambd
+            else:
+                data[:,i] = torch.sigmoid(data[:,i]) 
+                logj = logj - torch.log(data[:,i]*(1-data[:,i])) + math.log(1-2*self.lambd)
+                data[:,i] = (data[:,i] - self.lambd) / (1. - 2 * self.lambd) 
+
+        return data, logj
+
+
+
 class whiten(nn.Module):
 
     #whiten layer

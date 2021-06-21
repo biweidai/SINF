@@ -2,9 +2,34 @@ from SINF import *
 from load_data import * 
 import argparse
 
-def GIS(data_train, data_validate=None, iteration=None, weight_train=None, weight_validate=None, K=None, M=None, KDE=True, b_factor=1, alpha=None, edge_bins=None, 
-        ndata_A=None, MSWD_max_iter=None, NBfirstlayer=False, logit=False, Whiten=False, batchsize=None, nocuda=False, patch=False, shape=[28,28,1], model=None, verbose=True):
+def GIS(data_train, data_validate=None, iteration=None, weight_train=None, weight_validate=None, K=None, M=None, KDE=True, b_factor=1, alpha=None, bounds=None,
+        edge_bins=None, ndata_A=None, MSWD_max_iter=None, NBfirstlayer=False, Whiten=False, batchsize=None, nocuda=False, patch=False, shape=[28,28,1], model=None, verbose=True):
     
+    '''
+    data_train: (ndata_train, ndim).
+    data_validate: (ndata_validate, ndim), optional. If provided, its logp will be used to determine the number of iterations.
+    iteration: integer, optional. The maximum number of GIS iterations. Required if data_validate is not provided.
+    weight_train: (ndata_train, ), optional. The weights of data_train.
+    weight_validate: (ndata_train, ), optional. The weights of data_validate.
+    K: integer, optional. The number of slices for each iteration. See max K-SWD in the SINF paper. 1 <= K <= ndim.
+    M: integer, optional. The number of spline knots for rational quadratic splines.
+    KDE: bool. Whether to use KDE for estimating 1D PDF. Recommended True.
+    b_factor: positive float number, optional. The multiplicative factor for KDE kernel width.
+    alpha: two non-negative float number in the format of (alpha1, alpha2), optional. Regularization parameter. See Equation 13 of SINF paper. alpha1 for interpolation, alpha2 for extrapolation slope. 0 <= alpha1,2 < 1. If not given, very heavy regularization will be used, which could result in slow training and a large number of iterations.
+    bounds: sequence, optional. In the format of [[x1_min, x1_max], [x2_min, x2_max], ..., [xd_min, xd_max]]. Represent infinity and negative infinity with None.
+    edge_bins: non-negative integer, optional. The number of spline knots at the boundary.
+    ndata_A: positive integer, optional. The number of training data used for fitting A (slice axes).
+    MSWD_max_iter: positive integer, optional. The maximum number of iterations for optimizing A (slice axes). See Algorithm 1 of SINF paper. Called L_iter in the paper.
+    NBfirstlayer: bool, optional. Whether to use Naive Bayes (no rotation) at the first layer.
+    Whiten: bool, optional. Whether to whiten the data before applying GIS.
+    batchsize: positive integer, optional. The batch size for transforming the data. Does not change the performance. Only saves the memory. Useful when the data is too large and can't fit in the memory.
+    nocuda: bool, optional. Whether to use gpu.
+    patch: bool, optional. Whether to use patch-based modeling. Only useful for image datasets.
+    shape: sequence, optional. The shape of the image datasets, if patch is enabled.
+    model: GIS model, optional. Trained GIS model. If provided, new iterations will be added in the model.
+    verbose: bool, optional. Whether to print training information.
+    '''
+
     assert data_validate is not None or iteration is not None
  
     #hyperparameters
@@ -17,6 +42,10 @@ def GIS(data_train, data_validate=None, iteration=None, weight_train=None, weigh
         M = max(min(200, int(ndata**0.5)), 50)
     if alpha is None:
         alpha = (1-0.02*math.log10(ndata), 1-0.001*math.log10(ndata))
+    if bounds is not None:
+        assert len(bounds) == ndim
+        for i in range(ndim):
+            assert len(bounds[i]) == 2
     if edge_bins is None:
         edge_bins = max(int(math.log10(ndata))-1, 0)
     if batchsize is None:
@@ -68,9 +97,9 @@ def GIS(data_train, data_validate=None, iteration=None, weight_train=None, weigh
         else:
             print ('Initial logp:', logp_train, 'time:', time.time()-t, 'iteration:', len(model.layer))
 
-    #logit transform
-    if logit:
-        layer = logit(lambd=1e-5).to(device)
+    #boundary
+    if bounds is not None:
+        layer = boundary(bounds=bounds, lambd=1e-5, beta=1).to(device)
         data_train, logj_train = layer(data_train)
         if weight_train is None:
             logp_train = (torch.mean(logj_train) - ndim/2*torch.log(torch.tensor(2*math.pi)) - torch.mean(torch.sum(data_train**2,  dim=1)/2)).item()
@@ -89,9 +118,9 @@ def GIS(data_train, data_validate=None, iteration=None, weight_train=None, weigh
         model.add_layer(layer)
         if verbose:
             if data_validate is not None:
-                print('After logit transform logp:', logp_train, logp_validate)
+                print('After boundary transform logp:', logp_train, logp_validate)
             else:
-                print('After logit transform logp:', logp_train)
+                print('After boundary transform logp:', logp_train)
     
     #whiten
     if Whiten:
