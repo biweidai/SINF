@@ -40,11 +40,11 @@ def Gaussian_ppf(Nsample, weight=None, device=torch.device("cuda:0")):
     if weight is None:
         start = 50 / Nsample
         end = 100-start
-        q = torch.linspace(start, end, Nsample, device=device)
+        q = torch.linspace(start, end, Nsample, device=device, dtype=torch.float64)
     else:
-        q = torch.cumsum(weight, dim=1)
+        q = torch.cumsum(weight, dim=1, dtype=torch.float64)
         q = q - 0.5*weight
-    pg = 2**0.5 * torch.erfinv(2*q/100-1)
+    pg = 2**0.5 * torch.erfinv(2*q/100-1).to(torch.get_default_dtype())
     return pg
 
 
