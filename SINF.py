@@ -150,6 +150,18 @@ class SINF(nn.Module):
         return x, logp
 
 
+    def score(self, data, start=0, end=None, param=None):
+
+        #returns score = dlogp / dx
+
+        data.requires_grad_(True)
+        logp = torch.sum(self.evaluate_density(data, start, end, param))
+        score = torch.autograd.grad(logp, data)[0]
+        data.requires_grad_(False)
+
+        return score
+
+
 
 class logit(nn.Module):
 
@@ -196,6 +208,7 @@ class boundary(nn.Module):
     def forward(self, data, param=None):
 
         logj = torch.zeros(len(data), device=data.device)
+        data = data.clone()
         for i in range(data.shape[1]):
             if self.bounds[i] == [None, None]:
                 continue
@@ -211,9 +224,9 @@ class boundary(nn.Module):
                 logj = logj + self.beta * (data[:,i] - z)
                 data[:,i] = z
             else:
-                data[:,i] = self.lambd + (1 - 2 * self.lambd) * (data[:,i] - self.bounds[i][0]) / (self.bounds[i][1] - self.bounds[i][0])
-                logj = logj - torch.log(data[:,i]*(1-data[:,i])) + math.log((1-2*self.lambd) / (self.bounds[i][1] - self.bounds[i][0]))
-                data[:,i] = torch.log(data[:,i]) - torch.log1p(-data[:,i])
+                temp = self.lambd + (1 - 2 * self.lambd) * (data[:,i] - self.bounds[i][0]) / (self.bounds[i][1] - self.bounds[i][0])
+                logj = logj - torch.log(temp*(1-temp)) + math.log((1-2*self.lambd) / (self.bounds[i][1] - self.bounds[i][0]))
+                data[:,i] = torch.log(temp) - torch.log1p(-temp)
 
         return data, logj
 
@@ -221,6 +234,7 @@ class boundary(nn.Module):
     def inverse(self, data, param=None):
 
         logj = torch.zeros(len(data), device=data.device)
+        data = data.clone()
         for i in range(data.shape[1]):
             if self.bounds[i] == [None, None]:
                 continue
@@ -234,9 +248,9 @@ class boundary(nn.Module):
                 else:
                     data[:,i] = - x + self.bounds[i][1] + self.lambd
             else:
-                data[:,i] = torch.sigmoid(data[:,i]) 
-                logj = logj - torch.log(data[:,i]*(1-data[:,i])) + math.log((1-2*self.lambd) / (self.bounds[i][1] - self.bounds[i][0]))
-                data[:,i] = (data[:,i] - self.lambd) / (1. - 2 * self.lambd) * (self.bounds[i][1] - self.bounds[i][0]) + self.bounds[i][0]
+                temp = torch.sigmoid(data[:,i]) 
+                logj = logj - torch.log(temp*(1-temp)) + math.log((1-2*self.lambd) / (self.bounds[i][1] - self.bounds[i][0]))
+                data[:,i] = (temp - self.lambd) / (1. - 2 * self.lambd) * (self.bounds[i][1] - self.bounds[i][0]) + self.bounds[i][0]
 
         return data, logj
 
