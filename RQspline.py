@@ -12,7 +12,7 @@ def quantile_weights(input, quantiles, weights, scale):
     boundary = torch.cumsum(weight_sorted, dim=0)
     boundary = boundary - weight_sorted / 2.
     boundary = torch.cat((torch.zeros(1), boundary, torch.ones(1)), dim=0)
-    weight_sorted = torch.cat((torch.zeros(1), weight_sorted, torch.zeros(1)), dim=0)
+    weight_sorted = torch.cat((torch.zeros(1, device=input.device), weight_sorted, torch.zeros(1, device=input.device)), dim=0)
     in_sorted = torch.cat((in_sorted[0].reshape(1)-scale, in_sorted, in_sorted[-1].reshape(1)+scale), dim=0)
     ceiled = torch.bucketize(quantiles, boundary)
     ceiled[ceiled<1] = 1
