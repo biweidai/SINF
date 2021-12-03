@@ -31,7 +31,7 @@ def add_one_layer_inverse(model, data, sample, K, nsample_A, nsample, layer_type
         assert shift is not None
  
     if verbose:
-        tstart = start_timing()
+        tstart = start_timing(device)
 
     t = time.time()
     if put_data_on_disk:
@@ -132,7 +132,7 @@ def add_one_layer_inverse(model, data, sample, K, nsample_A, nsample, layer_type
         model.add_layer(layer.cpu(), position=0)
     #print(time.time()-t, '3')
     if verbose:
-        t = end_timing(tstart)
+        t = end_timing(tstart, device)
         print ('Nlayer:', len(model.layer), 'Time:', t, layer_type)
         print ()
 
