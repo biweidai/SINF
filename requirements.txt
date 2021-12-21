@@ -1,7 +1,8 @@
 numpy
 matplotlib
 scipy
+h5py
 imageio
-PIL
+Pillow
 torch
 torchvision
