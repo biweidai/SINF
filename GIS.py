@@ -193,7 +193,7 @@ def GIS(data_train, data_validate=None, iteration=None, weight_train=None, weigh
             if MSWD_max_iter0 is None:
                 MSWD_max_iter = min(len(data_train) // ndim, 200)
             
-            layer = PatchSlicedTransport(shape=shape, kernel_size=kernel, shift=shift, K=K, M=M).requires_grad_(False).to(device)
+            layer = PatchSlicedTransport(shape=shape, kernel=kernel, shift=shift, K=K, M=M).requires_grad_(False).to(device)
         else:
             #regular GIS layer
             if NBfirstlayer:
