@@ -1,5 +1,5 @@
-from SINF import *
-from load_data import * 
+from sinf.SINF import *
+from sinf.load_data import * 
 import argparse
 
 def GIS(data_train, data_validate=None, iteration=None, weight_train=None, weight_validate=None, K=None, M=None, KDE=True, b_factor=1, alpha=None, bounds=None,
