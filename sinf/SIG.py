@@ -1,8 +1,8 @@
-from SINF import *
-from load_data import * 
+from sinf.SINF import *
+from sinf.load_data import * 
 import argparse
 import time
-from fid_score import evaluate_fid_score
+from sinf.fid_score import evaluate_fid_score
 import torch.multiprocessing as mp
 import sys
 import os
