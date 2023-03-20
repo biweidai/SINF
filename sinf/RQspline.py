@@ -300,10 +300,12 @@ class RQspline(nn.Module):
 
         #linear extrapolation
         select0 = index == 0
+        select0 = select0.to('cpu')
         dim = torch.repeat_interleave(torch.arange(self.ndim).view(1,-1), len(x), dim=0)[select0]
         y[select0] = yy[dim, 0] + (x[select0]-xx[dim, 0]) * delta[dim, 0]
         logderiv[select0] = self.logderiv[dim, 0]
         selectn = index == self.nknot
+        selectn = selectn.to('cpu')
         dim = torch.repeat_interleave(torch.arange(self.ndim).view(1,-1), len(x), dim=0)[selectn]
         y[selectn] = yy[dim, -1] + (x[selectn]-xx[dim, -1]) * delta[dim, -1]
         logderiv[selectn] = self.logderiv[dim, -1]
@@ -332,10 +334,12 @@ class RQspline(nn.Module):
 
         #linear extrapolation
         select0 = index == 0
+        select0 = select0.to('cpu')
         dim = torch.repeat_interleave(torch.arange(self.ndim).view(1,-1), len(x), dim=0)[select0]
         x[select0] = xx[dim, 0] + (y[select0]-yy[dim, 0]) / delta[dim, 0]
         logderiv[select0] = self.logderiv[dim, 0]
         selectn = index == self.nknot
+        selectn = selectn.to('cpu')
         dim = torch.repeat_interleave(torch.arange(self.ndim).view(1,-1), len(x), dim=0)[selectn]
         x[selectn] = xx[dim, -1] + (y[selectn]-yy[dim, -1]) / delta[dim, -1]
         logderiv[selectn] = self.logderiv[dim, -1]
